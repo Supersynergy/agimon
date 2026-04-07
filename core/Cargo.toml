@@ -1,0 +1,22 @@
+[package]
+name = "agimon-core"
+version = "1.0.0"
+edition = "2024"
+description = "AGIMON Core — blazing fast AI agent monitor"
+license = "MIT"
+
+[[bin]]
+name = "agimon-core"
+path = "src/main.rs"
+
+[dependencies]
+sysinfo = "0.35"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
