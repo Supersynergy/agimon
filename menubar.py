@@ -201,7 +201,7 @@ def _resume_session(session_id: str, cwd: str = "/Users/master"):
                 activate
                 set cfg to new surface configuration
                 set initial working directory of cfg to "{cwd}"
-                set command of cfg to "claude --resume {session_id} --dangerously-skip-permissions"
+                set command of cfg to "/Users/master/.local/bin/claude --resume {session_id} --dangerously-skip-permissions"
                 new window with configuration cfg
             end tell
         '''])
@@ -248,7 +248,7 @@ def _launch_claude_in(path: str):
                 activate
                 set cfg to new surface configuration
                 set initial working directory of cfg to "{path}"
-                set command of cfg to "claude --dangerously-skip-permissions"
+                set command of cfg to "/Users/master/.local/bin/claude --dangerously-skip-permissions"
                 new window with configuration cfg
             end tell
         '''])

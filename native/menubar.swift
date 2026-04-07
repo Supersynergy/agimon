@@ -360,7 +360,7 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
                 itemSub.addItem(copyItem)
                 let cmdItem = NSMenuItem(title: "📋 Resume-CMD kopieren", action: #selector(copyText(_:)), keyEquivalent: "")
                 cmdItem.target = self
-                cmdItem.representedObject = "claude --resume \(s.id) --dangerously-skip-permissions"
+                cmdItem.representedObject = "/Users/master/.local/bin/claude --resume \(s.id) --dangerously-skip-permissions"
                 itemSub.addItem(cmdItem)
                 item.submenu = itemSub
                 sub.addItem(item)
@@ -511,7 +511,7 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
             osascript -e 'tell application "Ghostty"
                 activate
                 set cfg to new surface configuration
-                set command of cfg to "claude --resume \(sid) --dangerously-skip-permissions"
+                set command of cfg to "/Users/master/.local/bin/claude --resume \(sid) --dangerously-skip-permissions"
                 new window with configuration cfg
             end tell'
         """)
@@ -565,7 +565,7 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
                 activate
                 set cfg to new surface configuration
                 set initial working directory of cfg to "\(path)"
-                set command of cfg to "claude --dangerously-skip-permissions"
+                set command of cfg to "/Users/master/.local/bin/claude --dangerously-skip-permissions"
                 new window with configuration cfg
             end tell'
         """)

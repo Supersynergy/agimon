@@ -219,7 +219,7 @@ _run_osascript(f'''tell application \"Ghostty\"
     activate
     set cfg to new surface configuration
     set initial working directory of cfg to \"{path}\"
-    set command of cfg to \"claude --dangerously-skip-permissions\"
+    set command of cfg to \"/Users/master/.local/bin/claude --dangerously-skip-permissions\"
     new window with configuration cfg
 end tell''')
 print(f'\033[0;32m⚡ Claude gestartet in {path}\033[0m')
@@ -229,7 +229,7 @@ from collectors.ghostty import _run_osascript
 _run_osascript('''tell application \"Ghostty\"
     activate
     set cfg to new surface configuration
-    set command of cfg to \"claude --resume ${2:?session-id required} --dangerously-skip-permissions\"
+    set command of cfg to \"/Users/master/.local/bin/claude --resume ${2:?session-id required} --dangerously-skip-permissions\"
     new window with configuration cfg
 end tell''')
 print('\033[0;32m⚡ Session resumed\033[0m')
