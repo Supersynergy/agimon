@@ -1,0 +1,54 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "claude-monitor",
+  "title": "Claude Monitor",
+  "description": "Monitor Claude Code instances, costs, network, and Ghostty terminals",
+  "icon": "command-icon.png",
+  "author": "master",
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "live",
+      "title": "Claude Live Status",
+      "subtitle": "Running Claude instances",
+      "description": "Show all running Claude Code processes with CPU/RAM",
+      "mode": "view"
+    },
+    {
+      "name": "sessions",
+      "title": "Claude Sessions",
+      "subtitle": "Recent sessions & subagents",
+      "description": "Browse recent Claude sessions with tool usage and subagent details",
+      "mode": "view"
+    },
+    {
+      "name": "network",
+      "title": "Network Monitor",
+      "subtitle": "SSH tunnels & services",
+      "description": "View SSH tunnels, listening services, and external connections",
+      "mode": "view"
+    },
+    {
+      "name": "menubar",
+      "title": "Claude Menubar",
+      "subtitle": "Persistent menubar status",
+      "description": "Show Claude Code status in the menubar",
+      "mode": "menu-bar",
+      "interval": "10s"
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.80.0",
+    "@raycast/utils": "^1.16.0"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^1.0.0",
+    "@types/node": "20.14.0",
+    "typescript": "^5.4.0"
+  },
+  "scripts": {
+    "build": "ray build",
+    "dev": "ray develop",
+    "lint": "ray lint"
+  }
+}

@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+# ╔═══════════════════════════════════════════════════════════════╗
+# ║  AGIMON — Gotta monitor 'em all                             ║
+# ║  The AGI-grade monitor for AI coding agents                  ║
+# ╚═══════════════════════════════════════════════════════════════╝
+set -euo pipefail
+
+AGIMON_DIR="$(cd "$(dirname "$0")" && pwd)"
+PY="$AGIMON_DIR/.venv/bin/python3"
+VERSION="1.0.0"
+
+# Colors
+R='\033[0;31m' G='\033[0;32m' Y='\033[0;33m' B='\033[0;34m'
+M='\033[0;35m' C='\033[0;36m' W='\033[1;37m' D='\033[0;90m'
+N='\033[0m' BOLD='\033[1m'
+
+_header() {
+    echo -e "${M}╔═══════════════════════════════════════╗${N}"
+    echo -e "${M}║${W}  ⚡ AGIMON ${D}v${VERSION}${W} — Gotta monitor 'em all    ${M}║${N}"
+    echo -e "${M}╚═══════════════════════════════════════╝${N}"
+}
+
+_help() {
+    _header
+    echo ""
+    echo -e "${W}MONITORING${N}"
+    echo -e "  ${C}agimon${N}                  Dashboard (Live-Übersicht)"
+    echo -e "  ${C}agimon live${N}             Laufende Claude-Instanzen"
+    echo -e "  ${C}agimon sessions${N}         Aktive Sessions + Subagents"
+    echo -e "  ${C}agimon net${N}              Netzwerk: Tunnels, Services, Extern"
+    echo -e "  ${C}agimon ghostty${N}          Alle Ghostty Terminals"
+    echo -e "  ${C}agimon windows${N}          Alle Fenster (alle Apps)"
+    echo -e "  ${C}agimon costs${N}            Token-Kosten (14 Tage)"
+    echo ""
+    echo -e "${W}ORCHESTRATION${N}"
+    echo -e "  ${C}agimon delegate ${D}<task>${N}   Smart-Route Task zum besten Model"
+    echo -e "  ${C}agimon snap${N}             System-Snapshot (JSON)"
+    echo -e "  ${C}agimon send ${D}<w> <t> <cmd>${N}  Befehl an Ghostty Terminal senden"
+    echo -e "  ${C}agimon focus ${D}<w>${N}        Ghostty-Fenster fokussieren"
+    echo ""
+    echo -e "${W}SEARCH & MEMORY${N}"
+    echo -e "  ${C}agimon search ${D}<query>${N}   Qdrant Semantic Search"
+    echo -e "  ${C}agimon index${N}            Sessions in Qdrant indexieren"
+    echo -e "  ${C}agimon history ${D}<query>${N}  Vergangene Tasks durchsuchen"
+    echo ""
+    echo -e "${W}LAUNCH${N}"
+    echo -e "  ${C}agimon tui${N}              Textual Dashboard starten"
+    echo -e "  ${C}agimon menubar${N}          Menubar-App starten"
+    echo -e "  ${C}agimon open ${D}<project>${N}   Projekt in Ghostty+Claude öffnen"
+    echo -e "  ${C}agimon qdrant${N}           Qdrant Dashboard im Browser"
+    echo ""
+    echo -e "${W}SYSTEM${N}"
+    echo -e "  ${C}agimon kill ${D}<pid>${N}       Prozess beenden"
+    echo -e "  ${C}agimon kill-all${N}         Alle Claude-Instanzen stoppen"
+    echo -e "  ${C}agimon version${N}          Version anzeigen"
+}
+
+# ── Commands ─────────────────────────────────────────────────────
+
+cmd_live() {
+    _header
+    "$PY" -c "
+from collectors.processes import get_system_summary
+s = get_system_summary()
+print(f'\033[1;33m⚡ Claude Code: {s[\"active\"]} aktiv  {s[\"idle\"]} idle  {s[\"total\"]} total\033[0m')
+print(f'\033[0;90m  CPU: {s[\"total_cpu\"]}%  RAM: {s[\"total_mem_mb\"]:.0f}MB\033[0m')
+print()
+for cat, procs in s.get('by_category', {}).items():
+    icons = {'claude':'💻','dev-tool':'🔧','runtime':'⚙️','ide':'📝','infra':'🐳'}
+    c = sum(p.cpu_percent for p in procs)
+    m = sum(p.mem_mb for p in procs)
+    print(f'{icons.get(cat,\"\")} \033[1m{cat}\033[0m ({len(procs)})  CPU:{c:.1f}%  RAM:{m:.0f}MB')
+    for p in procs:
+        ic = '\033[0;32m●\033[0m' if p.status == 'active' else '\033[0;90m○\033[0m'
+        bar_w = 10
+        filled = int((p.cpu_percent / max(c, 1)) * bar_w) if c > 0 else 0
+        bar = '\033[0;33m' + '█' * filled + '\033[0;90m' + '░' * (bar_w - filled) + '\033[0m'
+        print(f'  {ic} {p.label:<16} {bar} {p.cpu_percent:>5.1f}%  {p.mem_mb:>6.0f}MB  PID:{p.pid}  {p.started}')
+    print()
+"
+}
+
+cmd_sessions() {
+    _header
+    "$PY" -c "
+from collectors.sessions import load_recent_sessions, get_active_session_ids
+active = get_active_session_ids()
+print('\033[1;33m📋 Sessions\033[0m\n')
+for s in load_recent_sessions(12):
+    ic = '\033[0;32m●\033[0m' if s.session_id in active else '\033[0;90m○\033[0m'
+    ag = f' \033[0;36m{len(s.subagents)}ag\033[0m' if s.subagents else ''
+    msg = (s.first_user_message or '...').replace(chr(10), ' ')[:50]
+    tools = ', '.join(f'{t}({c})' for t,c in sorted(s.tools_used.items(), key=lambda x:-x[1])[:3])
+    print(f'{ic} {msg}{ag}')
+    if tools: print(f'  \033[0;90mTools: {tools}\033[0m')
+    for sa in s.subagents[:2]:
+        print(f'  \033[0;90m└ {sa.agent_id[:12]} [{sa.model or \"?\"}] {sa.prompt_preview[:30]}\033[0m')
+"
+}
+
+cmd_net() {
+    _header
+    "$PY" -c "
+from collectors.network import get_network_summary
+n = get_network_summary()
+print(f'\033[1;33m🌐 Netzwerk\033[0m')
+print(f'\033[0;90m  Tunnels: {n[\"total_tunnels\"]}  Listener: {n[\"total_listeners\"]}  Extern: {n[\"total_external\"]}\033[0m\n')
+print('\033[1m🔒 SSH Tunnels\033[0m')
+for t in n['tunnels']:
+    print(f'  \033[0;36m:{t.local_port:>5}\033[0m → {t.label or \"unknown\"}')
+print()
+print('\033[1m🌍 Externe Verbindungen\033[0m')
+seen = {}
+for c in n['external']:
+    seen[c.process] = seen.get(c.process, 0) + 1
+for proc, cnt in sorted(seen.items(), key=lambda x:-x[1])[:10]:
+    print(f'  \033[0;33m{proc:<15}\033[0m {cnt}x')
+"
+}
+
+cmd_ghostty() {
+    _header
+    "$PY" -c "
+from collectors.ghostty import get_all_terminals_flat
+terms = get_all_terminals_flat()
+print(f'\033[1;33m🖥  Ghostty — {len(terms)} Terminals\033[0m\n')
+for t in terms:
+    title = t.get('terminal_title', '')[:35]
+    cl = ' \033[0;32m●\033[0m' if 'claude' in title.lower() else ''
+    print(f'  \033[0;36mW{t[\"window_index\"]} T{t[\"tab_index\"]}\033[0m  {title}{cl}')
+    print(f'  \033[0;90m     {t.get(\"working_dir\",\"\")}\033[0m')
+"
+}
+
+cmd_windows() {
+    _header
+    "$PY" -c "
+from collectors.windows import get_all_windows
+wins = get_all_windows()
+print(f'\033[1;33m🪟 Alle Fenster — {len(wins)} sichtbar\033[0m\n')
+for w in wins:
+    print(f'  \033[0;36m{w.app_name:>15}\033[0m  W{w.window_index}  {w.window_title[:45]}')
+"
+}
+
+cmd_costs() {
+    _header
+    "$PY" -c "
+from collectors.costs import load_costs_by_day, total_summary
+s = total_summary(14)
+print(f'\033[1;33m💰 Kosten (14 Tage)\033[0m')
+print(f'\033[1m  \${s[\"total_cost\"]:,.2f}\033[0m  {s[\"total_tokens\"]:,} tok  {s[\"total_sessions\"]} sess  {s[\"total_messages\"]} msgs\n')
+days = load_costs_by_day(14)
+if days:
+    mx = max(d.cost for d in days) or 1
+    for d in days:
+        w = 20
+        f = int((d.cost / mx) * w)
+        bar = '\033[0;33m' + '█' * f + '\033[0;90m' + '░' * (w - f) + '\033[0m'
+        print(f'  {d.date} {bar} \033[1m\${d.cost:>8,.2f}\033[0m  {d.sessions:>3}s  {d.messages:>4}m')
+"
+}
+
+cmd_dashboard() {
+    _header
+    cmd_live
+    echo -e "${D}─────────────────────────────────────────${N}"
+    cmd_costs
+    echo ""
+    echo -e "${D}Tipp: ${C}agimon tui${D} für interaktives Dashboard${N}"
+}
+
+# ── Dispatch ─────────────────────────────────────────────────────
+
+cd "$AGIMON_DIR"
+
+case "${1:-}" in
+    ""|dashboard)   cmd_dashboard ;;
+    live|status)    cmd_live ;;
+    sessions|sess)  cmd_sessions ;;
+    net|network)    cmd_net ;;
+    ghostty|terms)  cmd_ghostty ;;
+    windows|wins)   cmd_windows ;;
+    costs|tokens)   cmd_costs ;;
+    snap|snapshot)  "$PY" orchestrator.py snapshot ;;
+    delegate)       shift; "$PY" orchestrator.py delegate "$@" ;;
+    send)           shift; "$PY" orchestrator.py send "$@" ;;
+    focus)          "$PY" -c "from collectors.ghostty import focus_terminal; focus_terminal(${2:-1})" ;;
+    search)         shift; "$PY" -c "
+from collectors.qdrant_store import search_sessions
+for r in search_sessions('$*', limit=10):
+    print(f'[\033[0;33m{r.get(\"score\",0):.3f}\033[0m] {r.get(\"text\",\"\")[:70]}')
+" ;;
+    index)          bash hooks/auto_index.sh && echo -e "${G}Sessions indexiert${N}" ;;
+    history)        shift; "$PY" orchestrator.py history "$@" ;;
+    tui)            "$PY" app.py ;;
+    menubar)        "$PY" menubar.py & echo -e "${G}Menubar gestartet (PID: $!)${N}" ;;
+    open)           "$PY" -c "
+from collectors.ghostty import _run_osascript
+import subprocess, os
+path = os.path.expanduser('${2:-/Users/master}')
+_run_osascript(f'''tell application \"Ghostty\"
+    activate
+    set cfg to new surface configuration
+    set initial working directory of cfg to \"{path}\"
+    set command of cfg to \"claude --dangerously-skip-permissions\"
+    new window with configuration cfg
+end tell''')
+print(f'\033[0;32m⚡ Claude gestartet in {path}\033[0m')
+" ;;
+    qdrant)         open "http://localhost:6333/dashboard" ;;
+    kill)           kill "${2:?PID required}" && echo -e "${G}PID $2 beendet${N}" ;;
+    kill-all)       pkill -f "claude.*--dangerously" && echo -e "${G}Alle Claude gestoppt${N}" ;;
+    version|-v)     echo "AGIMON v$VERSION" ;;
+    help|-h|--help) _help ;;
+    *)              echo -e "${R}Unknown: $1${N}"; _help ;;
+esac
