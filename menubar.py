@@ -193,6 +193,20 @@ def _focus_ghost(wi: int):
     def cb(_): focus_terminal(wi)
     return cb
 
+def _resume_session(session_id: str, cwd: str = "/Users/master"):
+    """One-click: Resume a Claude session in a new Ghostty window."""
+    def cb(_):
+        subprocess.Popen(["osascript", "-e", f'''
+            tell application "Ghostty"
+                activate
+                set cfg to new surface configuration
+                set initial working directory of cfg to "{cwd}"
+                set command of cfg to "claude --resume {session_id} --dangerously-skip-permissions"
+                new window with configuration cfg
+            end tell
+        '''])
+    return cb
+
 def _open_url(url: str):
     def cb(_): subprocess.Popen(["open", url])
     return cb
@@ -313,44 +327,71 @@ class ClaudeMenubar(rumps.App):
 
         self.menu.add(None)
 
-        # ━━ Sessions mit Quick-Actions ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        sec = rumps.MenuItem("\U0001f4cb Sessions", callback=_noop)
+        # ━━ Aktive Sessions ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         try:
-            sessions = load_recent_sessions(8)
+            sessions = load_recent_sessions(30)
             active_ids = get_active_session_ids()
-            for s in sessions:
-                is_act = s.session_id in active_ids
-                ic = "\u25cf" if is_act else "\u25cb"
+            active_sessions = [s for s in sessions if s.session_id in active_ids]
+            recent_sessions = [s for s in sessions if s.session_id not in active_ids]
+
+            # Active sessions
+            sec = rumps.MenuItem(
+                f"\u26a1 Aktive Sessions ({len(active_sessions)})", callback=_noop
+            )
+            for s in active_sessions:
                 ag = f" \u2022 {len(s.subagents)}ag" if s.subagents else ""
                 tk = f" \u2022 {fmt_tok(s.input_tokens + s.output_tokens)}"
-                msg = (s.first_user_message or "...").replace("\n", " ")[:38]
-                it = rumps.MenuItem(f"{ic} {msg}{ag}{tk}", callback=_copy(s.first_user_message[:200]))
-
-                # Quick-action: open project in various ways
-                if s.project:
-                    proj_path = os.path.expanduser(
-                        s.project.replace("-Users-master", "/Users/master")
-                            .replace("-", "/", 2) if s.project.startswith("-") else s.project
-                    )
-                    if os.path.isdir(proj_path):
-                        it.add(rumps.MenuItem(f"\U0001f4c2 Im Finder \u00f6ffnen", callback=_open_in_finder(proj_path)))
-                        it.add(rumps.MenuItem(f"\U0001f4dd In Windsurf \u00f6ffnen", callback=_open_in_ide(proj_path)))
-                        it.add(rumps.MenuItem(f"\U0001f4bb Claude hier starten", callback=_launch_claude_in(proj_path)))
-                        it.add(rumps.MenuItem(f"\u2328\ufe0f Terminal hier", callback=_open_in_ghostty(proj_path)))
-
+                msg = (s.first_user_message or "...").replace("\n", " ")[:35]
+                it = rumps.MenuItem(
+                    f"\u25cf {msg}{ag}{tk}",
+                    callback=_resume_session(s.session_id),
+                )
+                it.add(rumps.MenuItem(
+                    f"\u25b6\ufe0f Resume in neuem Fenster",
+                    callback=_resume_session(s.session_id),
+                ))
                 if s.tools_used:
                     tools = ", ".join(f"{t}({c})" for t, c in sorted(s.tools_used.items(), key=lambda x: -x[1])[:4])
                     it.add(rumps.MenuItem(f"Tools: {tools}", callback=_noop))
-                for sa in s.subagents[:2]:
+                for sa in s.subagents[:3]:
                     it.add(rumps.MenuItem(
-                        f"\u2514 {sa.agent_id[:10]} [{sa.model or '?'}] {sa.prompt_preview[:25]}",
+                        f"\u2514 {sa.agent_id[:10]} [{sa.model or '?'}] {sa.prompt_preview[:30]}",
                         callback=_noop,
                     ))
-                it.add(rumps.MenuItem(f"\U0001f4cb Session-ID kopieren", callback=_copy(s.session_id)))
+                it.add(rumps.MenuItem(f"\U0001f4cb ID: {s.session_id[:20]}...", callback=_copy(s.session_id)))
                 sec.add(it)
+            if not active_sessions:
+                sec.add(rumps.MenuItem("  Keine aktiven Sessions", callback=_noop))
+            self.menu.add(sec)
+
+            # Recent sessions (resume-fähig)
+            sec = rumps.MenuItem(
+                f"\U0001f4dc Letzte Sessions ({len(recent_sessions)})", callback=_noop
+            )
+            for s in recent_sessions[:20]:
+                ag = f" {len(s.subagents)}ag" if s.subagents else ""
+                ts = s.start_time[5:16] if s.start_time else ""
+                msg = (s.first_user_message or "...").replace("\n", " ")[:30]
+                it = rumps.MenuItem(
+                    f"\u25cb {ts} {msg}{ag}",
+                    callback=_resume_session(s.session_id),
+                )
+                it.add(rumps.MenuItem(
+                    f"\u25b6\ufe0f Resume: claude --resume {s.session_id[:12]}...",
+                    callback=_resume_session(s.session_id),
+                ))
+                it.add(rumps.MenuItem(f"\U0001f4cb Session-ID kopieren", callback=_copy(s.session_id)))
+                it.add(rumps.MenuItem(
+                    f"\U0001f4cb Resume-Command kopieren",
+                    callback=_copy(f"claude --resume {s.session_id} --dangerously-skip-permissions"),
+                ))
+                if s.tools_used:
+                    tools = ", ".join(sorted(s.tools_used.keys())[:5])
+                    it.add(rumps.MenuItem(f"Tools: {tools}", callback=_noop))
+                sec.add(it)
+            self.menu.add(sec)
         except Exception:
-            sec.add(rumps.MenuItem("  Fehler", callback=_noop))
-        self.menu.add(sec)
+            self.menu.add(rumps.MenuItem("\U0001f4cb Sessions: Fehler", callback=_noop))
 
         # ━━ Ghostty Terminals (klickbar = fokussiert) ━━━━━━━━━━━━
         sec = rumps.MenuItem(f"\U0001f5a5 Ghostty ({len(get_all_terminals_flat())} Terminals)", callback=_noop)
@@ -429,31 +470,50 @@ class ClaudeMenubar(rumps.App):
             sec.add(rumps.MenuItem("  Fehler", callback=_noop))
         self.menu.add(sec)
 
-        # ━━ Quick Actions ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # ━━ Projekte (smart detected + favorites) ━━━━━━━━━━━━━━━
         self.menu.add(None)
-        self.menu.add(rumps.MenuItem("\U0001f5a5 Dashboard (TUI)", callback=self._open_tui))
-        self.menu.add(rumps.MenuItem("\U0001f4ca Qdrant Dashboard", callback=_open_url("http://localhost:6333/dashboard")))
-        self.menu.add(rumps.MenuItem("\U0001f916 SuperJarvis", callback=_open_url("http://localhost:7777")))
-        self.menu.add(rumps.MenuItem("\U0001f4c1 ~/claude-monitor", callback=_open_in_finder(SCRIPT_DIR)))
-        self.menu.add(None)
-
-        # Frequent project launchers
         fav = rumps.MenuItem("\u2b50 Projekte", callback=_noop)
         PROJECTS = [
-            ("SupersynergyCRM", "/Users/master/SupersynergyCRM"),
-            ("ZeroClaw Agents", "/Users/master/supersynergyapp/supersynergy-agents"),
-            ("Omni Scraper", "/Users/master/omni-scraper"),
-            ("Claude Monitor", SCRIPT_DIR),
+            ("\U0001f916 SuperJarvis", "/Users/master/projects/SUPERJARVIS", "http://localhost:7777"),
+            ("\U0001f4bc SupersynergyCRM", "/Users/master/SupersynergyCRM", "http://localhost:8000"),
+            ("\U0001f577 ZeroClaw Agents", "/Users/master/supersynergyapp/supersynergy-agents", None),
+            ("\U0001f50d Omni Scraper", "/Users/master/omni-scraper", None),
+            ("\u26a1 AGIMON", SCRIPT_DIR, None),
+            ("\U0001f4da Plane.so", "/Users/master/plane-docker", "http://localhost:8090"),
         ]
-        for name, path in PROJECTS:
-            if os.path.isdir(path):
-                pi = rumps.MenuItem(f"\U0001f4c2 {name}", callback=_open_in_finder(path))
-                pi.add(rumps.MenuItem(f"\U0001f4bb Claude starten", callback=_launch_claude_in(path)))
-                pi.add(rumps.MenuItem(f"\U0001f4dd In Windsurf", callback=_open_in_ide(path)))
-                pi.add(rumps.MenuItem(f"\u2328\ufe0f Terminal", callback=_open_in_ghostty(path)))
-                pi.add(rumps.MenuItem(f"\U0001f4c2 Im Finder", callback=_open_in_finder(path)))
-                fav.add(pi)
+        for name, path, url in PROJECTS:
+            if not os.path.isdir(path):
+                continue
+            pi = rumps.MenuItem(name, callback=_open_in_finder(path))
+            pi.add(rumps.MenuItem(f"\U0001f4bb Claude Code starten", callback=_launch_claude_in(path)))
+            pi.add(rumps.MenuItem(f"\U0001f4dd In Windsurf \u00f6ffnen", callback=_open_in_ide(path)))
+            pi.add(rumps.MenuItem(f"\u2328\ufe0f Terminal hier", callback=_open_in_ghostty(path)))
+            pi.add(rumps.MenuItem(f"\U0001f4c2 Im Finder", callback=_open_in_finder(path)))
+            if url:
+                pi.add(rumps.MenuItem(f"\U0001f310 Web UI \u00f6ffnen", callback=_open_url(url)))
+            fav.add(pi)
         self.menu.add(fav)
+
+        # ━━ Quick Links ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        links = rumps.MenuItem("\U0001f517 Quick Links", callback=_noop)
+        LINKS = [
+            ("\U0001f5a5 AGIMON TUI Dashboard", None, self._open_tui),
+            ("\U0001f4ca Qdrant Dashboard", "http://localhost:6333/dashboard", None),
+            ("\U0001f916 SuperJarvis :7777", "http://localhost:7777", None),
+            ("\U0001f4bc CRM :8000", "http://localhost:8000", None),
+            ("\U0001f4cb Plane.so :8090", "http://localhost:8090", None),
+            ("\U0001f4ca Grafana :3030", "http://localhost:3030", None),
+            ("\U0001f50d Typesense :8108", "http://localhost:8108", None),
+            ("\U0001f4e6 Minio :9001", "http://localhost:9001", None),
+            ("\U0001f310 Gitea :3000", "http://localhost:3000", None),
+            ("\U0001f9e0 Ollama :11434", "http://localhost:11434", None),
+        ]
+        for label, url, custom_cb in LINKS:
+            if custom_cb:
+                links.add(rumps.MenuItem(label, callback=custom_cb))
+            elif url:
+                links.add(rumps.MenuItem(label, callback=_open_url(url)))
+        self.menu.add(links)
 
         self.menu.add(None)
         self.menu.add(rumps.MenuItem("\u274c Alle Claude stoppen", callback=self._stop_all))
