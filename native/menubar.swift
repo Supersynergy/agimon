@@ -160,30 +160,55 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
-        updateTitle()
+
+        // Styled title with attributed string
+        updateTitle(nil)
         rebuildMenu()
+
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             self?.onTick()
         }
+        RunLoop.current.add(timer!, forMode: .common)
     }
 
     func onTick() {
         tickCount += 1
-        updateTitle()
+        updateTitle(nil)
         if tickCount % 3 == 0 { rebuildMenu() }
     }
 
-    func updateTitle() {
-        guard let data = fetchIpc() else {
-            statusItem.button?.title = "○ CC:?"
+    func updateTitle(_ ipc: IpcData?) {
+        let data = ipc ?? fetchIpc()
+        guard let data = data else {
+            statusItem.button?.title = "⚡ CC --"
             return
         }
-        cpuHistory.append(data.cpu)
-        cpuHistory = Array(cpuHistory.suffix(8))
-        let spark = sparkline(cpuHistory)
-        let icon = data.active > 0 ? "●" : "○"
-        statusItem.button?.title = "\(icon) CC:\(data.active)/\(data.total) \(spark) \(Int(data.cpu))%"
+
+        // Smart compact title — no sparkline, clean info
+        let icon = data.active > 0 ? "⚡" : "○"
+        let title = NSMutableAttributedString()
+        let mono = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+        let monoLight = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+
+        // Icon + active count (bold orange when active)
+        let iconColor: NSColor = data.active > 0 ? .systemOrange : .secondaryLabelColor
+        title.append(NSAttributedString(string: "\(icon) \(data.active)", attributes: [
+            .font: mono, .foregroundColor: iconColor
+        ]))
+
+        // Separator + total
+        title.append(NSAttributedString(string: "/\(data.total) ", attributes: [
+            .font: monoLight, .foregroundColor: NSColor.secondaryLabelColor
+        ]))
+
+        // CPU with color coding
+        let cpuInt = Int(data.cpu)
+        let cpuColor: NSColor = cpuInt > 50 ? .systemRed : (cpuInt > 20 ? .systemYellow : .labelColor)
+        title.append(NSAttributedString(string: "\(cpuInt)%", attributes: [
+            .font: mono, .foregroundColor: cpuColor
+        ]))
+
+        statusItem.button?.attributedTitle = title
     }
 
     func rebuildMenu() {
@@ -197,13 +222,12 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
         }
 
         // ── Header ──
-        let spark = sparkline(cpuHistory)
         menu.addItem(styledItem(
             "⚡ AGIMON — \(ipc.active) aktiv  \(ipc.idle) idle  \(ipc.total) total",
             color: .systemOrange, bold: true
         ))
         menu.addItem(styledItem(
-            "CPU \(spark) \(String(format: "%.1f", ipc.cpu))%  │  RAM \(ipc.mem_mb)MB  │  \(ipc.procs.count) Procs",
+            "CPU \(String(format: "%.1f", ipc.cpu))%  │  RAM \(ipc.mem_mb)MB  │  \(ipc.procs.count) Procs",
             color: .secondaryLabelColor, mono: true
         ))
 
