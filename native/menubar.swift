@@ -230,23 +230,12 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let title = NSMutableAttributedString()
-        let mono = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-        let small = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
-
-        // Menubar title — vivid status dot + clean numbers
-        let hasActive = data.active > 0
-        title.append(NSAttributedString(string: hasActive ? "● " : "○ ", attributes: [
-            .font: mono, .foregroundColor: hasActive ? Palette.alive : Palette.subtle
-        ]))
-        title.append(NSAttributedString(string: "\(data.active)", attributes: [
-            .font: mono, .foregroundColor: hasActive ? Palette.gold : Palette.muted
-        ]))
-        title.append(NSAttributedString(string: "╱\(data.total)", attributes: [
-            .font: small, .foregroundColor: Palette.subtle
-        ]))
-
-        statusItem.button?.attributedTitle = title
+        // Show Claude count in title, not all processes
+        let claudeProcs = data.procs.filter { $0.cat == "claude" }
+        let claudeActive = claudeProcs.filter { $0.s == "active" }.count
+        let claudeTotal = claudeProcs.count
+        let icon = claudeTotal > 0 ? "⚡" : "◇"
+        statusItem.button?.title = "\(icon) \(claudeActive)/\(claudeTotal)"
     }
 
     func rebuildMenu() {
@@ -263,12 +252,15 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
         }
 
         // ── Header ──
+        let claudeCount = ipc.procs.filter { $0.cat == "claude" }.count
+        let claudeActive = ipc.procs.filter { $0.cat == "claude" && $0.s == "active" }.count
         menu.addItem(styledItem(
-            "⚡ AGIMON — \(ipc.active) aktiv · \(ipc.idle) idle · \(ipc.total) total",
+            "⚡ AGIMON — \(claudeActive) aktiv · \(claudeCount) Claude · \(ipc.procs.count) total",
             color: Palette.gold, bold: true
         ))
+        let totalMem = ipc.procs.reduce(0) { $0 + $1.mem }
         menu.addItem(styledItem(
-            "CPU \(String(format: "%.1f", ipc.cpu))%  │  RAM \(ipc.mem_mb)MB  │  \(ipc.procs.count) Procs",
+            "RAM \(totalMem)MB  │  \(ipc.procs.count) Prozesse",
             color: Palette.muted, mono: true
         ))
 

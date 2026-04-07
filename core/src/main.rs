@@ -161,6 +161,8 @@ fn restart_service(name: &str) -> bool {
 fn watchdog(sys: &System) -> Vec<String> {
     let mut alerts = Vec::new();
     for &(svc, keyword, _) in SERVICES {
+        // Skip colima/ssh — they're tunnels, not real services to monitor
+        if svc == "colima" { continue; }
         let s = check_service(sys, keyword);
         if !s.running {
             alerts.push(format!("DOWN: {svc} is not running"));
