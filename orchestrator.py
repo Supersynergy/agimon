@@ -211,7 +211,7 @@ def take_snapshot() -> dict:
             })
 
     return {
-        "timestamp": datetime.now(datetime.timezone.utc).isoformat(),
+        "timestamp": datetime.now(tz=None).isoformat(),
         "processes": {
             "total": sys_info["total"],
             "active": sys_info["active"],
