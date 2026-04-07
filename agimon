@@ -7,7 +7,8 @@ set -euo pipefail
 
 AGIMON_DIR="$(cd "$(dirname "$0")" && pwd)"
 PY="$AGIMON_DIR/.venv/bin/python3"
-VERSION="1.0.0"
+CORE="$HOME/.local/bin/agimon-core"
+VERSION="1.1.0"
 
 # Colors
 R='\033[0;31m' G='\033[0;32m' Y='\033[0;33m' B='\033[0;34m'
@@ -34,9 +35,16 @@ _help() {
     echo ""
     echo -e "${W}ORCHESTRATION${N}"
     echo -e "  ${C}agimon delegate ${D}<task>${N}   Smart-Route Task zum besten Model"
-    echo -e "  ${C}agimon snap${N}             System-Snapshot (JSON)"
+    echo -e "  ${C}agimon snap${N}             System-Snapshot (JSON) ${Y}[Rust]${N}"
     echo -e "  ${C}agimon send ${D}<w> <t> <cmd>${N}  Befehl an Ghostty Terminal senden"
     echo -e "  ${C}agimon focus ${D}<w>${N}        Ghostty-Fenster fokussieren"
+    echo -e "  ${C}agimon resume ${D}<id>${N}      Session in neuem Fenster fortsetzen"
+    echo ""
+    echo -e "${W}HEALTH & SERVICES${N}  ${Y}[Rust-Core]${N}"
+    echo -e "  ${C}agimon ps-fast${N}          Prozesse (100x schneller via Rust)"
+    echo -e "  ${C}agimon health${N}           Service-Status: Ollama, Docker, Qdrant..."
+    echo -e "  ${C}agimon watch${N}            Watchdog — findet Probleme automatisch"
+    echo -e "  ${C}agimon restart ${D}<svc>${N}    Service neustarten (ollama, docker, colima)"
     echo ""
     echo -e "${W}SEARCH & MEMORY${N}"
     echo -e "  ${C}agimon search ${D}<query>${N}   Qdrant Semantic Search"
@@ -182,7 +190,15 @@ case "${1:-}" in
     ghostty|terms)  cmd_ghostty ;;
     windows|wins)   cmd_windows ;;
     costs|tokens)   cmd_costs ;;
-    snap|snapshot)  "$PY" orchestrator.py snapshot ;;
+    # ── Rust-Core (blazing fast) ──
+    ps-fast)        "$CORE" ps ;;
+    snap|snapshot)  "$CORE" snap ;;
+    health)         "$CORE" health ;;
+    watch|watchdog) "$CORE" watch ;;
+    restart)        "$CORE" restart "${2:?service required}" ;;
+    ipc)            "$CORE" ipc ;;
+
+    # ── Python (rich features) ──
     delegate)       shift; "$PY" orchestrator.py delegate "$@" ;;
     send)           shift; "$PY" orchestrator.py send "$@" ;;
     focus)          "$PY" -c "from collectors.ghostty import focus_terminal; focus_terminal(${2:-1})" ;;
@@ -197,7 +213,7 @@ for r in search_sessions('$*', limit=10):
     menubar)        "$PY" menubar.py & echo -e "${G}Menubar gestartet (PID: $!)${N}" ;;
     open)           "$PY" -c "
 from collectors.ghostty import _run_osascript
-import subprocess, os
+import os
 path = os.path.expanduser('${2:-/Users/master}')
 _run_osascript(f'''tell application \"Ghostty\"
     activate
@@ -208,9 +224,28 @@ _run_osascript(f'''tell application \"Ghostty\"
 end tell''')
 print(f'\033[0;32m⚡ Claude gestartet in {path}\033[0m')
 " ;;
+    resume)         "$PY" -c "
+from collectors.ghostty import _run_osascript
+_run_osascript('''tell application \"Ghostty\"
+    activate
+    set cfg to new surface configuration
+    set command of cfg to \"claude --resume ${2:?session-id required} --dangerously-skip-permissions\"
+    new window with configuration cfg
+end tell''')
+print('\033[0;32m⚡ Session resumed\033[0m')
+" ;;
+
+    # ── Quick links ──
     qdrant)         open "http://localhost:6333/dashboard" ;;
+    grafana)        open "http://localhost:3030" ;;
+    jarvis)         open "http://localhost:7777" ;;
+    plane)          open "http://localhost:8090" ;;
+    gitea)          open "http://localhost:3000" ;;
+
+    # ── Process control ──
     kill)           kill "${2:?PID required}" && echo -e "${G}PID $2 beendet${N}" ;;
     kill-all)       pkill -f "claude.*--dangerously" && echo -e "${G}Alle Claude gestoppt${N}" ;;
+
     version|-v)     echo "AGIMON v$VERSION" ;;
     help|-h|--help) _help ;;
     *)              echo -e "${R}Unknown: $1${N}"; _help ;;
