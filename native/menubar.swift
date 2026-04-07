@@ -204,10 +204,13 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.title = "⚡ …"
 
-        // Styled title with attributed string
-        updateTitle(nil)
-        rebuildMenu()
+        // Delay first data fetch to not block startup
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.updateTitle(nil)
+            self?.rebuildMenu()
+        }
 
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             self?.onTick()
@@ -218,7 +221,7 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
     func onTick() {
         tickCount += 1
         updateTitle(nil)
-        if tickCount % 3 == 0 { rebuildMenu() }
+        if tickCount % 4 == 0 { rebuildMenu() }  // every 20s instead of 15s
     }
 
     func updateTitle(_ ipc: IpcData?) {
