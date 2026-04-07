@@ -54,10 +54,12 @@ func coreBin() -> String {
     return "\(home)/.local/bin/agimon-core"
 }
 
+// Cache last successful IPC result — never show "offline" if we had data
+private var _lastIpc: IpcData?
+
 func fetchIpc() -> IpcData? {
-    // Direct binary execution — no shell, no PATH issues
     let bin = coreBin()
-    guard FileManager.default.fileExists(atPath: bin) else { return nil }
+    guard FileManager.default.fileExists(atPath: bin) else { return _lastIpc }
     let p = Process()
     p.executableURL = URL(fileURLWithPath: bin)
     p.arguments = ["ipc"]
@@ -67,9 +69,13 @@ func fetchIpc() -> IpcData? {
     do {
         try p.run()
         p.waitUntilExit()
-    } catch { return nil }
+    } catch { return _lastIpc }
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    return try? JSONDecoder().decode(IpcData.self, from: data)
+    if let decoded = try? JSONDecoder().decode(IpcData.self, from: data) {
+        _lastIpc = decoded
+        return decoded
+    }
+    return _lastIpc  // fallback to last good data
 }
 
 func fetchSessions() -> [SessionInfo] {
@@ -216,9 +222,11 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
     }
 
     func updateTitle(_ ipc: IpcData?) {
-        let data = ipc ?? fetchIpc()
-        guard let data = data else {
-            statusItem.button?.title = "⚡ CC --"
+        let data: IpcData
+        if let d = ipc ?? fetchIpc() {
+            data = d
+        } else {
+            statusItem.button?.title = "◇ …"
             return
         }
 
@@ -245,8 +253,11 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
-        guard let ipc = fetchIpc() else {
-            menu.addItem(styledItem("⚡ AGIMON — offline", color: Palette.danger, bold: true))
+        let ipc: IpcData
+        if let fetched = fetchIpc() {
+            ipc = fetched
+        } else {
+            menu.addItem(styledItem("⚡ AGIMON — wird geladen…", color: Palette.muted, bold: true))
             statusItem.menu = menu
             return
         }
