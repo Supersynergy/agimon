@@ -262,69 +262,38 @@ class ClaudeMenubar(rumps.App):
     def __init__(self) -> None:
         super().__init__(name="Claude Monitor", title="\u25cf CC", quit_button=None)
         self._cpu_history: list[float] = [0.0] * 8
-        # Cached data — updated in background thread
-        self._cached_data: dict = {}
-        self._cache_lock = __import__("threading").Lock()
-        self._slow_tick_count = 0
+        self._tick_count = 0
 
-    @rumps.timer(3)
+    @rumps.timer(5)
     def _tick(self, _):
-        """Fast tick — only update title from cache, rebuild menu every 3rd tick."""
+        """Single timer — title every tick, full menu every 3rd tick."""
+        self._tick_count += 1
         try:
-            self._fast_update()
-            self._slow_tick_count += 1
-            if self._slow_tick_count >= 3:  # full menu rebuild every ~9s
-                self._slow_tick_count = 0
-                # Run heavy data collection in background
-                __import__("threading").Thread(target=self._collect_data, daemon=True).start()
-        except Exception:
-            self.title = "\u25cb CC:err"
-
-    def _collect_data(self) -> None:
-        """Background thread — collects all heavy data."""
-        try:
+            # Title update (fast — Rust IPC only, ~5ms)
             si = get_system_summary()
-            sessions_data = load_recent_sessions(20)
-            active_ids = get_active_session_ids()
-            terms = get_all_terminals_flat()
-            tunnels = get_ssh_tunnels()
-            external = get_external_connections()
-            listeners = get_listening_services()
-            cost_data = total_summary(14)
-            days = load_costs_by_day(7)
+            act, cpu, tot = si["active"], si["total_cpu"], si["total"]
+            self._cpu_history.append(cpu)
+            self._cpu_history = self._cpu_history[-8:]
+            spark = self._sparkline(self._cpu_history)
+            icon = "\u25cf" if act > 0 else "\u25cb"
+            self.title = f"{icon} CC:{act}/{tot} {spark} {cpu:.0f}%"
 
-            with self._cache_lock:
-                self._cached_data = {
-                    "si": si, "sessions": sessions_data,
-                    "active_ids": active_ids, "terms": terms,
-                    "tunnels": tunnels, "external": external,
-                    "listeners": listeners, "costs": cost_data, "days": days,
+            # Full menu rebuild every 3rd tick (~15s)
+            if self._tick_count % 3 == 1:
+                data = {
+                    "si": si,
+                    "sessions": load_recent_sessions(20),
+                    "active_ids": get_active_session_ids(),
+                    "terms": get_all_terminals_flat(),
+                    "tunnels": get_ssh_tunnels(),
+                    "external": get_external_connections(),
+                    "listeners": get_listening_services(),
+                    "costs": total_summary(14),
+                    "days": load_costs_by_day(7),
                 }
-            # Trigger menu rebuild on main thread
-            rumps.Timer(self._rebuild_menu, 0.1).start()
-        except Exception:
-            pass
-
-    def _rebuild_menu(self, _):
-        """Called on main thread after data collection."""
-        try:
-            with self._cache_lock:
-                data = self._cached_data.copy()
-            if data:
                 self._render_menu(data)
         except Exception:
-            pass
-
-    def _fast_update(self) -> None:
-        """Fast title-only update from Rust IPC (~5ms)."""
-        si = get_system_summary()
-        act, cpu = si["active"], si["total_cpu"]
-        tot = si["total"]
-        self._cpu_history.append(cpu)
-        self._cpu_history = self._cpu_history[-8:]
-        spark = self._sparkline(self._cpu_history)
-        icon = "\u25cf" if act > 0 else "\u25cb"
-        self.title = f"{icon} CC:{act}/{tot} {spark} {cpu:.0f}%"
+            self.title = "\u25cb CC:err"
 
     def _sparkline(self, values: list[float]) -> str:
         """Unicode sparkline from values."""
