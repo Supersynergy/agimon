@@ -255,3 +255,60 @@ Built for **Ghostty** but process monitoring, cost tracking, and session analysi
   <sub>Because running 10 AI agents without a dashboard is like flying blind.</sub><br/><br/>
   <em>Gotta monitor 'em all.</em>
 </p>
+
+---
+
+## 🔎 Why AGIMON?
+
+**If you use any of these, you need AGIMON:**
+
+- **Claude Code** (Anthropic CLI) — monitor sessions, subagents, tool calls, token costs
+- **Gemini CLI** (Google) — track processes, CPU, memory usage
+- **OpenAI Codex CLI** — see what's running, what it costs
+- **Kimi Code** (Moonshot) — process monitoring and control
+- **Cursor / Windsurf / Continue** — IDE agent tracking
+- **Aider** — monitor background coding agents
+- **Any AI CLI tool** — if it runs in a terminal, AGIMON sees it
+
+### Compared to alternatives
+
+| | AGIMON | Activity Monitor | htop | AgentOps | Langfuse |
+|---|---|---|---|---|---|
+| AI agent awareness | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Terminal integration | ✅ Ghostty native | ❌ | ❌ | ❌ | ❌ |
+| No SDK required | ✅ | ✅ | ✅ | ❌ needs SDK | ❌ needs SDK |
+| macOS menubar | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Cost tracking | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Semantic search | ✅ Qdrant | ❌ | ❌ | ❌ | ❌ |
+| Process kill/focus | ✅ | ✅ | ✅ | ❌ | ❌ |
+| One-click project launch | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Subagent tracking | ✅ | ❌ | ❌ | ✅ | ✅ |
+| SSH tunnel awareness | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Free & open source | ✅ | ✅ | ✅ | freemium | freemium |
+| Zero config | ✅ | ✅ | ✅ | ❌ | ❌ |
+
+### Who is this for?
+
+- Developers running **multiple Claude Code instances** simultaneously
+- Power users with **10+ terminal tabs** who lose track of what's where
+- Teams who need to **track AI agent costs** across projects
+- Anyone who wants **htop but for AI agents**
+
+---
+
+<details>
+<summary><strong>📇 Keywords</strong> <em>(for GitHub search)</em></summary>
+
+claude code monitor, ai agent dashboard, htop for ai, claude code dashboard,
+ai process manager, terminal monitor macos, ghostty applescript, claude cost tracker,
+ai agent orchestration, multi agent monitor, claude subagent tracking, ai coding assistant monitor,
+gemini cli monitor, codex cli dashboard, kimi code monitor, aider monitor,
+cursor agent tracker, windsurf process monitor, continue dev monitor,
+macos menubar app, raycast extension ai, sketchybar plugin, textual tui dashboard,
+qdrant semantic search, ai session history, token cost analytics, ssh tunnel monitor,
+claude code cost, anthropic api monitor, openai cost tracker, ai developer tools,
+process manager macos, terminal dashboard, agent memory, ai observability,
+llm monitor, llm cost tracker, llm dashboard, claude opus monitor, claude sonnet tracker,
+ai agent memory manager, smart agent monitor, agi monitor, agent orchestration platform
+
+</details>
