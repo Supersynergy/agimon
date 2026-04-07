@@ -185,7 +185,7 @@ cd "$AGIMON_DIR"
 case "${1:-}" in
     ""|dashboard)   cmd_dashboard ;;
     live|status)    cmd_live ;;
-    sessions|sess)  cmd_sessions ;;
+    sessions|sess)  "$CORE" sessions 20 ;;
     net|network)    "$CORE" net ;;
     ghostty|terms)  cmd_ghostty ;;
     windows|wins)   cmd_windows ;;

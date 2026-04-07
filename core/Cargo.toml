@@ -13,8 +13,10 @@ path = "src/main.rs"
 sysinfo = "0.35"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+simd-json = { version = "0.14", features = ["serde_impl"] }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
+glob = "0.3"
 
 [profile.release]
 opt-level = 3
