@@ -1,15 +1,25 @@
-"""Qdrant integration for searchable session history."""
+"""Qdrant integration — uses official qdrant-client (gRPC when available)."""
 from __future__ import annotations
 import hashlib
-import json
-import time
 from datetime import datetime
 
 QDRANT_URL = "http://localhost:6333"
 COLLECTION = "claude_monitor"
-VECTOR_DIM = 384  # all-MiniLM-L6-v2
+VECTOR_DIM = 384
 
+_client = None
 _encoder = None
+
+
+def _get_client():
+    global _client
+    if _client is None:
+        try:
+            from qdrant_client import QdrantClient
+            _client = QdrantClient(url=QDRANT_URL, timeout=5)
+        except ImportError:
+            return None
+    return _client
 
 
 def _get_encoder():
@@ -23,62 +33,52 @@ def _get_encoder():
     return _encoder
 
 
-def _ensure_collection():
-    """Create collection if it doesn't exist."""
-    import urllib.request
+def _ensure_collection() -> bool:
+    client = _get_client()
+    if client is None:
+        return False
     try:
-        resp = urllib.request.urlopen(f"{QDRANT_URL}/collections/{COLLECTION}")
-        if resp.status == 200:
-            return True
+        client.get_collection(COLLECTION)
+        return True
     except Exception:
         pass
     try:
-        data = json.dumps({
-            "vectors": {"size": VECTOR_DIM, "distance": "Cosine"}
-        }).encode()
-        req = urllib.request.Request(
-            f"{QDRANT_URL}/collections/{COLLECTION}",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="PUT"
+        from qdrant_client.models import VectorParams, Distance
+        client.create_collection(
+            collection_name=COLLECTION,
+            vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE),
         )
-        urllib.request.urlopen(req)
         return True
     except Exception:
         return False
 
 
 def index_session(session_id: str, text: str, metadata: dict) -> bool:
-    """Index a session into Qdrant for semantic search."""
-    import urllib.request
+    """Index a session into Qdrant."""
+    client = _get_client()
     encoder = _get_encoder()
-    if encoder is None:
+    if client is None or encoder is None:
         return False
     if not _ensure_collection():
         return False
 
-    vector = encoder.encode(text).tolist()
-    point_id = int(hashlib.md5(session_id.encode()).hexdigest()[:8], 16)
-
-    payload = {
-        "session_id": session_id,
-        "text": text[:2000],
-        "timestamp": datetime.utcnow().isoformat(),
-        **metadata,
-    }
-
-    data = json.dumps({
-        "points": [{"id": point_id, "vector": vector, "payload": payload}]
-    }).encode()
-
     try:
-        req = urllib.request.Request(
-            f"{QDRANT_URL}/collections/{COLLECTION}/points",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="PUT"
+        from qdrant_client.models import PointStruct
+        vector = encoder.encode(text).tolist()
+        point_id = int(hashlib.md5(session_id.encode()).hexdigest()[:8], 16)
+        client.upsert(
+            collection_name=COLLECTION,
+            points=[PointStruct(
+                id=point_id,
+                vector=vector,
+                payload={
+                    "session_id": session_id,
+                    "text": text[:2000],
+                    "timestamp": datetime.now().isoformat(),
+                    **metadata,
+                },
+            )],
         )
-        urllib.request.urlopen(req)
         return True
     except Exception:
         return False
@@ -86,48 +86,40 @@ def index_session(session_id: str, text: str, metadata: dict) -> bool:
 
 def search_sessions(query: str, limit: int = 10) -> list[dict]:
     """Semantic search over indexed sessions."""
-    import urllib.request
+    client = _get_client()
     encoder = _get_encoder()
-    if encoder is None:
+    if client is None or encoder is None:
         return []
     if not _ensure_collection():
         return []
 
-    vector = encoder.encode(query).tolist()
-    data = json.dumps({
-        "vector": vector,
-        "limit": limit,
-        "with_payload": True,
-    }).encode()
-
     try:
-        req = urllib.request.Request(
-            f"{QDRANT_URL}/collections/{COLLECTION}/points/search",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST"
+        vector = encoder.encode(query).tolist()
+        results = client.query_points(
+            collection_name=COLLECTION,
+            query=vector,
+            limit=limit,
+            with_payload=True,
         )
-        resp = urllib.request.urlopen(req)
-        result = json.loads(resp.read())
         return [
-            {**hit["payload"], "score": hit["score"]}
-            for hit in result.get("result", [])
+            {**hit.payload, "score": hit.score}
+            for hit in results.points
         ]
     except Exception:
         return []
 
 
 def get_collection_stats() -> dict:
-    """Get Qdrant collection statistics."""
-    import urllib.request
+    """Get Qdrant collection stats."""
+    client = _get_client()
+    if client is None:
+        return {"points": 0, "vectors": 0, "status": "offline"}
     try:
-        resp = urllib.request.urlopen(f"{QDRANT_URL}/collections/{COLLECTION}")
-        data = json.loads(resp.read())
-        info = data.get("result", {})
+        info = client.get_collection(COLLECTION)
         return {
-            "points": info.get("points_count", 0),
-            "vectors": info.get("vectors_count", 0),
-            "status": info.get("status", "unknown"),
+            "points": info.points_count or 0,
+            "vectors": info.vectors_count or 0,
+            "status": str(info.status),
         }
     except Exception:
         return {"points": 0, "vectors": 0, "status": "offline"}

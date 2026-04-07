@@ -186,7 +186,7 @@ case "${1:-}" in
     ""|dashboard)   cmd_dashboard ;;
     live|status)    cmd_live ;;
     sessions|sess)  cmd_sessions ;;
-    net|network)    cmd_net ;;
+    net|network)    "$CORE" net ;;
     ghostty|terms)  cmd_ghostty ;;
     windows|wins)   cmd_windows ;;
     costs|tokens)   cmd_costs ;;

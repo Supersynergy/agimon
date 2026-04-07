@@ -191,6 +191,8 @@ enum Cmd {
     Watch,
     /// Restart a service (ollama, docker, colima)
     Restart { service: String },
+    /// Network: tunnels, listeners, external (replaces lsof Python)
+    Net,
     /// Compact JSON for menubar IPC
     Ipc,
 }
@@ -201,6 +203,96 @@ fn init_sys() -> System {
     std::thread::sleep(std::time::Duration::from_millis(200));
     sys.refresh_processes(ProcessesToUpdate::All, true);
     sys
+}
+
+// ── Network (fast lsof parsing in Rust) ────────────────────────
+
+#[derive(Serialize)]
+struct NetConn {
+    process: String,
+    pid: u32,
+    port: u16,
+    addr: String,
+    remote: String,
+    state: String,
+    label: String,
+    kind: String, // "tunnel", "listen", "external"
+}
+
+fn port_label(port: u16) -> &'static str {
+    match port {
+        3000 => "Gitea", 3030 => "Grafana", 4222 => "NATS",
+        5432 | 5433 | 5434 => "PostgreSQL", 6333 => "Qdrant-HTTP",
+        6334 => "Qdrant-gRPC", 6379 | 6380 | 6381 => "Redis",
+        7777 => "SuperJarvis", 8100 => "API", 8108 => "Typesense",
+        8222 => "NATS-Mon", 9001 => "Minio", 9222 => "Chrome-Debug",
+        11434 => "Ollama", 14000 => "Custom", 15432 => "PG-Tunnel",
+        16379 => "Redis-Tunnel", 49998 => "Dolt",
+        _ => "",
+    }
+}
+
+fn parse_port(s: &str) -> (String, u16) {
+    if let Some(idx) = s.rfind(':') {
+        let addr = s[..idx].to_string();
+        let port = s[idx + 1..].parse().unwrap_or(0);
+        (addr, port)
+    } else {
+        (s.to_string(), 0)
+    }
+}
+
+fn collect_network() -> Vec<NetConn> {
+    let output = Command::new("lsof")
+        .args(["-i", "-nP"])
+        .output()
+        .ok();
+    let stdout = output
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_default();
+
+    let mut conns = Vec::new();
+    let mut seen_listen = std::collections::HashSet::new();
+    let mut seen_ext = std::collections::HashSet::new();
+
+    for line in stdout.lines().skip(1) {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 9 { continue; }
+        let process = cols[0];
+        let pid: u32 = cols[1].parse().unwrap_or(0);
+        let addr = cols[8];
+        let state = cols.get(9).copied().unwrap_or("");
+
+        if state.contains("LISTEN") || addr.contains("(LISTEN)") {
+            let clean = addr.replace("(LISTEN)", "");
+            let (a, port) = parse_port(&clean);
+            let key = format!("{process}:{port}");
+            if seen_listen.contains(&key) { continue; }
+            seen_listen.insert(key);
+            let kind = if process == "ssh" { "tunnel" } else { "listen" };
+            conns.push(NetConn {
+                process: process.to_string(), pid, port, addr: a,
+                remote: String::new(), state: "LISTEN".into(),
+                label: port_label(port).to_string(), kind: kind.into(),
+            });
+        } else if addr.contains("->") && state.contains("ESTABLISHED") {
+            let parts: Vec<&str> = addr.splitn(2, "->").collect();
+            if parts.len() < 2 { continue; }
+            let remote = parts[1];
+            if remote.starts_with("127.") || remote.starts_with("[::1]") { continue; }
+            let key = format!("{process}:{remote}");
+            if seen_ext.contains(&key) { continue; }
+            seen_ext.insert(key);
+            let (r_addr, r_port) = parse_port(remote);
+            conns.push(NetConn {
+                process: process.to_string(), pid, port: r_port,
+                addr: parts[0].to_string(), remote: r_addr,
+                state: "ESTABLISHED".into(),
+                label: port_label(r_port).to_string(), kind: "external".into(),
+            });
+        }
+    }
+    conns
 }
 
 fn main() {
@@ -268,6 +360,31 @@ fn main() {
                 println!("\x1b[32m\u{2713} Restart initiated\x1b[0m");
             } else {
                 eprintln!("\x1b[31m\u{2717} Unknown service: {service}\x1b[0m");
+            }
+        }
+        Cmd::Net => {
+            let conns = collect_network();
+            let tunnels: Vec<_> = conns.iter().filter(|c| c.kind == "tunnel").collect();
+            let listeners: Vec<_> = conns.iter().filter(|c| c.kind == "listen").collect();
+            let external: Vec<_> = conns.iter().filter(|c| c.kind == "external").collect();
+
+            println!("\x1b[1;33m\u{1f512} SSH Tunnels ({})\x1b[0m", tunnels.len());
+            for c in &tunnels {
+                println!("  \x1b[36m:{:>5}\x1b[0m \u{2192} {}", c.port, if c.label.is_empty() { "unknown" } else { &c.label });
+            }
+            println!("\n\x1b[1;33m\u{1f4e1} Dienste ({})\x1b[0m", listeners.len());
+            for c in listeners.iter().take(15) {
+                println!("  {} \x1b[36m:{}\x1b[0m {}", c.process, c.port, c.label);
+            }
+            println!("\n\x1b[1;33m\u{1f30d} Extern ({})\x1b[0m", external.len());
+            let mut proc_counts = HashMap::new();
+            for c in &external {
+                *proc_counts.entry(c.process.clone()).or_insert(0u32) += 1;
+            }
+            let mut sorted_procs: Vec<_> = proc_counts.into_iter().collect();
+            sorted_procs.sort_by(|a, b| b.1.cmp(&a.1));
+            for (proc, cnt) in sorted_procs.iter().take(10) {
+                println!("  \x1b[33m{proc:<15}\x1b[0m {cnt}x");
             }
         }
         Cmd::Ipc => {
