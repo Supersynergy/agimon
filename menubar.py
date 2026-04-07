@@ -261,34 +261,112 @@ class ClaudeMenubar(rumps.App):
 
     def __init__(self) -> None:
         super().__init__(name="Claude Monitor", title="\u25cf CC", quit_button=None)
+        self._cpu_history: list[float] = [0.0] * 8
+        # Cached data — updated in background thread
+        self._cached_data: dict = {}
+        self._cache_lock = __import__("threading").Lock()
+        self._slow_tick_count = 0
 
-    @rumps.timer(4)
+    @rumps.timer(3)
     def _tick(self, _):
-        try: self._render()
-        except Exception: self.title = "\u25cb CC:err"
+        """Fast tick — only update title from cache, rebuild menu every 3rd tick."""
+        try:
+            self._fast_update()
+            self._slow_tick_count += 1
+            if self._slow_tick_count >= 3:  # full menu rebuild every ~9s
+                self._slow_tick_count = 0
+                # Run heavy data collection in background
+                __import__("threading").Thread(target=self._collect_data, daemon=True).start()
+        except Exception:
+            self.title = "\u25cb CC:err"
 
-    def _render(self) -> None:
+    def _collect_data(self) -> None:
+        """Background thread — collects all heavy data."""
+        try:
+            si = get_system_summary()
+            sessions_data = load_recent_sessions(20)
+            active_ids = get_active_session_ids()
+            terms = get_all_terminals_flat()
+            tunnels = get_ssh_tunnels()
+            external = get_external_connections()
+            listeners = get_listening_services()
+            cost_data = total_summary(14)
+            days = load_costs_by_day(7)
+
+            with self._cache_lock:
+                self._cached_data = {
+                    "si": si, "sessions": sessions_data,
+                    "active_ids": active_ids, "terms": terms,
+                    "tunnels": tunnels, "external": external,
+                    "listeners": listeners, "costs": cost_data, "days": days,
+                }
+            # Trigger menu rebuild on main thread
+            rumps.Timer(self._rebuild_menu, 0.1).start()
+        except Exception:
+            pass
+
+    def _rebuild_menu(self, _):
+        """Called on main thread after data collection."""
+        try:
+            with self._cache_lock:
+                data = self._cached_data.copy()
+            if data:
+                self._render_menu(data)
+        except Exception:
+            pass
+
+    def _fast_update(self) -> None:
+        """Fast title-only update from Rust IPC (~5ms)."""
         si = get_system_summary()
-        act, idl, tot = si["active"], si["idle"], si["total"]
-        cpu, mem = si["total_cpu"], si["total_mem_mb"]
+        act, cpu = si["active"], si["total_cpu"]
+        tot = si["total"]
+        self._cpu_history.append(cpu)
+        self._cpu_history = self._cpu_history[-8:]
+        spark = self._sparkline(self._cpu_history)
+        icon = "\u25cf" if act > 0 else "\u25cb"
+        self.title = f"{icon} CC:{act}/{tot} {spark} {cpu:.0f}%"
+
+    def _sparkline(self, values: list[float]) -> str:
+        """Unicode sparkline from values."""
+        chars = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
+        if not values:
+            return ""
+        mx = max(values) or 1
+        return "".join(chars[min(int(v / mx * 7), 7)] for v in values)
+
+    def _render_menu(self, data: dict) -> None:
+        si = data.get("si", {})
+        act, idl, tot = si.get("active", 0), si.get("idle", 0), si.get("total", 0)
+        cpu, mem = si.get("total_cpu", 0), si.get("total_mem_mb", 0)
         all_p = si.get("all_processes", [])
         by_cat = si.get("by_category", {})
-
-        icon = "\u25cf" if act > 0 else "\u25cb"
-        self.title = f"{icon} CC:{act}/{tot}  {cpu:.0f}%  {mem:.0f}MB"
+        spark = self._sparkline(self._cpu_history)
 
         self.menu.clear()
         mx = max((p.cpu_percent for p in all_p), default=1) or 1
 
         # ━━ Header ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         self.menu.add(rumps.MenuItem(
-            f"\u26a1 Claude Code \u2014 {act} aktiv  {idl} idle  {tot} total",
+            f"\u26a1 AGIMON \u2014 {act} aktiv  {idl} idle  {tot} Claude",
             callback=self._open_tui,
         ))
         self.menu.add(rumps.MenuItem(
-            f"\u03a3 CPU {cpu:.1f}%  \u2502  RAM {mem:.0f}MB  \u2502  {len(all_p)} Prozesse",
+            f"CPU {spark} {cpu:.1f}%  \u2502  RAM {mem:.0f}MB  \u2502  {len(all_p)} Prozesse",
             callback=_noop,
         ))
+        # Watchdog alerts inline
+        try:
+            watch_out = subprocess.run(
+                [str(Path.home() / ".local/bin/agimon-core"), "watch"],
+                capture_output=True, text=True, timeout=3,
+            ).stdout.strip()
+            if "\u26a0" in watch_out:
+                lines = [l.strip() for l in watch_out.split("\n") if "\u25cf" in l]
+                for alert_line in lines[:3]:
+                    clean = alert_line.replace("\x1b[31m\u25cf\x1b[0m ", "")
+                    self.menu.add(rumps.MenuItem(f"\u26a0\ufe0f {clean}", callback=_noop))
+        except Exception:
+            pass
         self.menu.add(None)
 
         # ━━ Prozesse nach Kategorie ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -329,8 +407,8 @@ class ClaudeMenubar(rumps.App):
 
         # ━━ Aktive Sessions ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         try:
-            sessions = load_recent_sessions(30)
-            active_ids = get_active_session_ids()
+            sessions = data.get("sessions", [])
+            active_ids = data.get("active_ids", set())
             active_sessions = [s for s in sessions if s.session_id in active_ids]
             recent_sessions = [s for s in sessions if s.session_id not in active_ids]
 
@@ -394,9 +472,9 @@ class ClaudeMenubar(rumps.App):
             self.menu.add(rumps.MenuItem("\U0001f4cb Sessions: Fehler", callback=_noop))
 
         # ━━ Ghostty Terminals (klickbar = fokussiert) ━━━━━━━━━━━━
-        sec = rumps.MenuItem(f"\U0001f5a5 Ghostty ({len(get_all_terminals_flat())} Terminals)", callback=_noop)
+        terms = data.get("terms", [])
+        sec = rumps.MenuItem(f"\U0001f5a5 Ghostty ({len(terms)} Terminals)", callback=_noop)
         try:
-            terms = get_all_terminals_flat()
             for t in terms[:15]:
                 title = t.get("terminal_title", "")[:28]
                 wi = t.get("window_index", 0)
@@ -418,8 +496,8 @@ class ClaudeMenubar(rumps.App):
 
         # ━━ Netzwerk ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         sec = rumps.MenuItem("\U0001f310 Netzwerk", callback=_noop)
-        tunnels = get_ssh_tunnels()
-        external = get_external_connections()
+        tunnels = data.get("tunnels", [])
+        external = data.get("external", [])
 
         sub_t = rumps.MenuItem(f"\U0001f512 SSH Tunnels ({len(tunnels)})", callback=_noop)
         for t in tunnels:
@@ -437,7 +515,7 @@ class ClaudeMenubar(rumps.App):
             sub_e.add(rumps.MenuItem(f"{proc}: {cnt}x", callback=_noop))
         sec.add(sub_e)
 
-        non_ssh = [l for l in get_listening_services() if l.process != "ssh"]
+        non_ssh = [l for l in data.get("listeners", []) if l.process != "ssh"]
         sub_l = rumps.MenuItem(f"\U0001f4e1 Dienste ({len(non_ssh)})", callback=_noop)
         for l in non_ssh[:10]:
             sub_l.add(rumps.MenuItem(
@@ -450,14 +528,14 @@ class ClaudeMenubar(rumps.App):
         # ━━ Kosten ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         sec = rumps.MenuItem("\U0001f4b0 Kosten", callback=_noop)
         try:
-            sm = total_summary(14)
+            sm = data.get("costs", {})
             sec.add(rumps.MenuItem(
-                f"14 Tage: ${sm['total_cost']:,.2f}  \u2502  "
-                f"{fmt_tok(sm['total_tokens'])} tok  \u2502  "
-                f"{sm['total_sessions']} sess",
+                f"14 Tage: ${sm.get('total_cost',0):,.2f}  \u2502  "
+                f"{fmt_tok(sm.get('total_tokens',0))} tok  \u2502  "
+                f"{sm.get('total_sessions',0)} sess",
                 callback=_noop,
             ))
-            days = load_costs_by_day(7)
+            days = data.get("days", [])
             if days:
                 mx_c = max(d.cost for d in days) or 1
                 for d in days:
