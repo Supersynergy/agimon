@@ -1,4 +1,4 @@
-"""Claude Monitor — macOS Menubar with killer UX features."""
+"""AGIMON — macOS Menubar with native pyobjc dialogs."""
 from __future__ import annotations
 import rumps
 import subprocess
@@ -7,6 +7,14 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+from AppKit import (
+    NSAlert, NSAlertFirstButtonReturn,
+    NSAttributedString, NSMutableAttributedString,
+    NSFont, NSColor, NSTextField, NSImage,
+    NSFontAttributeName, NSForegroundColorAttributeName,
+)
+from Foundation import NSDictionary, NSMakeRect
+
 from collectors.processes import get_system_summary
 from collectors.costs import total_summary, load_costs_by_day
 from collectors.network import get_ssh_tunnels, get_external_connections, get_listening_services
@@ -14,6 +22,10 @@ from collectors.sessions import load_recent_sessions, get_active_session_ids
 from collectors.ghostty import get_all_terminals_flat, focus_terminal
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Custom icon (not Python logo)
+_ICON_PATH = "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/ToolbarAdvanced.icns"
+_KILL_ICON = "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/AlertStopIcon.icns"
 
 
 def fmt_tok(n: int) -> str:
@@ -29,6 +41,47 @@ def _bar(val: float, mx: float, w: int = 10) -> str:
     return "\u2588" * f + "\u2591" * (w - f)
 
 
+# ── Native macOS Dialog ─────────────────────────────────────────────
+
+def _styled_alert(title: str, lines: list[tuple[str, object]],
+                  buttons: list[str] | None = None,
+                  icon_path: str = _ICON_PATH) -> int:
+    """Show a native NSAlert with colored monospace text and custom icon."""
+    alert = NSAlert.alloc().init()
+    alert.setMessageText_(title)
+    alert.setAlertStyle_(1)  # Informational
+
+    for btn in (buttons or ["OK"]):
+        alert.addButtonWithTitle_(btn)
+
+    icon = NSImage.alloc().initByReferencingFile_(icon_path)
+    if icon:
+        alert.setIcon_(icon)
+
+    # Build attributed string
+    text = NSMutableAttributedString.alloc().init()
+    mono = NSFont.monospacedSystemFontOfSize_weight_(12.0, 0.0)
+
+    for line, color in lines:
+        attrs = NSDictionary.dictionaryWithObjects_forKeys_(
+            [mono, color],
+            [NSFontAttributeName, NSForegroundColorAttributeName],
+        )
+        seg = NSAttributedString.alloc().initWithString_attributes_(line + "\n", attrs)
+        text.appendAttributedString_(seg)
+
+    # Accessory text field
+    tv = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 450, 220))
+    tv.setAttributedStringValue_(text)
+    tv.setEditable_(False)
+    tv.setBezeled_(False)
+    tv.setDrawsBackground_(False)
+    tv.setSelectable_(True)
+    alert.setAccessoryView_(tv)
+
+    return alert.runModal()
+
+
 # ── Callback factories ──────────────────────────────────────────────
 
 def _noop(_): pass
@@ -36,32 +89,104 @@ def _noop(_): pass
 def _copy(text: str):
     def cb(_):
         subprocess.run(["pbcopy"], input=text.encode(), check=False)
-        rumps.notification("Kopiert", "", text[:50])
+        rumps.notification("AGIMON", "Kopiert", text[:50])
     return cb
 
 def _kill_pid(pid: int, label: str):
     def cb(_):
-        r = rumps.alert(f"{label} (PID {pid}) beenden?", ok="Kill", cancel="Nein")
-        if r == 1:
+        result = _styled_alert(
+            f"\u274c {label} beenden?",
+            [
+                (f"PID: {pid}", NSColor.systemRedColor()),
+                (f"Prozess: {label}", NSColor.labelColor()),
+                ("", NSColor.labelColor()),
+                ("Wird mit SIGTERM beendet.", NSColor.secondaryLabelColor()),
+            ],
+            buttons=["Kill", "Abbrechen"],
+            icon_path=_KILL_ICON,
+        )
+        if result == NSAlertFirstButtonReturn:
             subprocess.run(["kill", str(pid)], check=False)
-            rumps.notification("Beendet", "", f"{label} PID {pid}")
+            rumps.notification("AGIMON", "Beendet", f"{label} PID {pid}")
     return cb
 
 def _proc_detail(pid: int):
     def cb(_):
         try:
-            info = subprocess.run(
+            ps_out = subprocess.run(
                 ["ps", "-p", str(pid), "-o", "pid,ppid,%cpu,%mem,rss,etime,command"],
                 capture_output=True, text=True, timeout=5
-            ).stdout
-            net = subprocess.run(
+            ).stdout.strip()
+            net_out = subprocess.run(
                 ["lsof", "-i", "-nP", "-a", "-p", str(pid)],
                 capture_output=True, text=True, timeout=5
-            ).stdout
-            conns = "\n".join(net.strip().split("\n")[1:6]) or "Keine Verbindungen"
-            rumps.alert(title=f"PID {pid}", message=f"{info.strip()}\n\n{conns}")
+            ).stdout.strip()
+            conns = net_out.split("\n")[1:8]
+
+            lines: list[tuple[str, object]] = []
+
+            # Parse ps output
+            ps_lines = ps_out.split("\n")
+            if len(ps_lines) >= 2:
+                header = ps_lines[0].strip()
+                data = ps_lines[1].strip()
+                lines.append((f"\u2500\u2500 Prozess \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500", NSColor.systemOrangeColor()))
+                lines.append((header, NSColor.secondaryLabelColor()))
+                # Color code by CPU
+                cols = data.split()
+                cpu_val = float(cols[2]) if len(cols) > 2 else 0
+                color = NSColor.systemRedColor() if cpu_val > 50 else (
+                    NSColor.systemYellowColor() if cpu_val > 10 else NSColor.systemGreenColor()
+                )
+                lines.append((data, color))
+
+            # Command
+            if len(ps_lines) >= 2:
+                cols = ps_lines[1].split(None, 6)
+                if len(cols) >= 7:
+                    lines.append(("", NSColor.labelColor()))
+                    lines.append(("\u2500\u2500 Command \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500", NSColor.systemOrangeColor()))
+                    lines.append((cols[6][:80], NSColor.systemCyanColor()))
+
+            # Network
+            lines.append(("", NSColor.labelColor()))
+            lines.append((f"\u2500\u2500 Netzwerk ({len(conns)} Verbindungen) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500", NSColor.systemOrangeColor()))
+            if conns:
+                for c in conns:
+                    parts = c.split()
+                    if len(parts) >= 9:
+                        addr = parts[8] if len(parts) > 8 else parts[-1]
+                        if "ESTABLISHED" in c:
+                            lines.append((f"  \u25cf {addr}", NSColor.systemGreenColor()))
+                        elif "LISTEN" in c:
+                            lines.append((f"  \u25cb {addr}", NSColor.systemBlueColor()))
+                        else:
+                            lines.append((f"  \u2022 {c.strip()[:60]}", NSColor.secondaryLabelColor()))
+                    else:
+                        lines.append((f"  {c.strip()[:60]}", NSColor.secondaryLabelColor()))
+            else:
+                lines.append(("  Keine Netzwerkverbindungen", NSColor.secondaryLabelColor()))
+
+            result = _styled_alert(
+                f"\U0001f50d Prozess {pid}",
+                lines,
+                buttons=["Kill", "PID kopieren", "CMD kopieren", "Schlie\u00dfen"],
+            )
+
+            if result == NSAlertFirstButtonReturn:
+                subprocess.run(["kill", str(pid)], check=False)
+                rumps.notification("AGIMON", "Beendet", f"PID {pid}")
+            elif result == NSAlertFirstButtonReturn + 1:
+                subprocess.run(["pbcopy"], input=str(pid).encode(), check=False)
+                rumps.notification("AGIMON", "Kopiert", f"PID {pid}")
+            elif result == NSAlertFirstButtonReturn + 2:
+                cols = ps_lines[1].split(None, 6) if len(ps_lines) >= 2 else []
+                cmd = cols[6] if len(cols) >= 7 else str(pid)
+                subprocess.run(["pbcopy"], input=cmd.encode(), check=False)
+                rumps.notification("AGIMON", "Kopiert", cmd[:50])
+
         except Exception as e:
-            rumps.alert(f"Fehler: {e}")
+            _styled_alert("\u274c Fehler", [(str(e), NSColor.systemRedColor())])
     return cb
 
 def _focus_ghost(wi: int):
