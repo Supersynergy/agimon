@@ -152,22 +152,24 @@ func sparkline(_ values: [Double]) -> String {
 // Creates naturally harmonious, sacred-geometry-inspired palette
 
 struct Palette {
-    // Elegant minimal — inspired by Linear/Raycast/Vercel dark UI
-    // Primary accent — cool white-blue (not orange)
-    static let gold     = NSColor(calibratedRed: 0.82, green: 0.86, blue: 0.92, alpha: 1)  // ice blue-white
-    static let amber    = NSColor(calibratedRed: 0.70, green: 0.78, blue: 0.88, alpha: 1)  // soft steel
+    // Vibrant but refined — Figma/Arc/Notion inspired
+    // Each category gets a distinct, beautiful color
 
-    // Semantic — φ-spaced hues, low saturation for elegance
-    static let teal     = NSColor(calibratedHue: 0.520, saturation: 0.35, brightness: 0.75, alpha: 1)  // muted teal
-    static let violet   = NSColor(calibratedHue: 0.720, saturation: 0.30, brightness: 0.78, alpha: 1)  // soft lavender
-    static let sage     = NSColor(calibratedHue: 0.380, saturation: 0.30, brightness: 0.72, alpha: 1)  // sage green
+    // Header — electric blue (Arc browser vibes)
+    static let gold     = NSColor(calibratedRed: 0.40, green: 0.65, blue: 1.00, alpha: 1)  // vivid blue
+    static let amber    = NSColor(calibratedRed: 0.55, green: 0.75, blue: 1.00, alpha: 1)  // light blue
 
-    // Status — soft, not screaming
-    static let alive    = NSColor(calibratedHue: 0.380, saturation: 0.45, brightness: 0.75, alpha: 1)  // calm green
-    static let warn     = NSColor(calibratedHue: 0.100, saturation: 0.50, brightness: 0.85, alpha: 1)  // soft warm
-    static let danger   = NSColor(calibratedHue: 0.000, saturation: 0.50, brightness: 0.80, alpha: 1)  // muted red
-    static let muted    = NSColor(calibratedRed: 0.50, green: 0.50, blue: 0.52, alpha: 1)  // neutral gray
-    static let subtle   = NSColor(calibratedRed: 0.38, green: 0.38, blue: 0.40, alpha: 1)  // darker
+    // Categories — each visually distinct and beautiful
+    static let teal     = NSColor(calibratedRed: 0.30, green: 0.85, blue: 0.75, alpha: 1)  // turquoise
+    static let violet   = NSColor(calibratedRed: 0.70, green: 0.50, blue: 0.95, alpha: 1)  // rich purple
+    static let sage     = NSColor(calibratedRed: 0.45, green: 0.82, blue: 0.45, alpha: 1)  // fresh green
+
+    // Status — clear and readable
+    static let alive    = NSColor(calibratedRed: 0.30, green: 0.85, blue: 0.50, alpha: 1)  // bright green
+    static let warn     = NSColor(calibratedRed: 1.00, green: 0.75, blue: 0.25, alpha: 1)  // warm yellow
+    static let danger   = NSColor(calibratedRed: 1.00, green: 0.40, blue: 0.40, alpha: 1)  // clear red
+    static let muted    = NSColor(calibratedRed: 0.60, green: 0.62, blue: 0.65, alpha: 1)  // readable gray
+    static let subtle   = NSColor(calibratedRed: 0.45, green: 0.47, blue: 0.50, alpha: 1)  // dim
     static let text     = NSColor.labelColor
 }
 
@@ -224,21 +226,16 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
         let mono = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
         let small = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
 
-        // Clean menubar title — like Linear/Vercel
-        let activeColor: NSColor = data.active > 0 ? Palette.alive : Palette.muted
-        title.append(NSAttributedString(string: data.active > 0 ? "● " : "○ ", attributes: [
-            .font: mono, .foregroundColor: activeColor
+        // Menubar title — vivid status dot + clean numbers
+        let hasActive = data.active > 0
+        title.append(NSAttributedString(string: hasActive ? "● " : "○ ", attributes: [
+            .font: mono, .foregroundColor: hasActive ? Palette.alive : Palette.subtle
         ]))
         title.append(NSAttributedString(string: "\(data.active)", attributes: [
-            .font: mono, .foregroundColor: NSColor.labelColor
+            .font: mono, .foregroundColor: hasActive ? Palette.gold : Palette.muted
         ]))
-        title.append(NSAttributedString(string: "/\(data.total) ", attributes: [
-            .font: small, .foregroundColor: Palette.muted
-        ]))
-        let cpuInt = Int(data.cpu)
-        let cpuColor: NSColor = cpuInt > 60 ? Palette.danger : (cpuInt > 25 ? Palette.warn : Palette.muted)
-        title.append(NSAttributedString(string: "\(cpuInt)%", attributes: [
-            .font: small, .foregroundColor: cpuColor
+        title.append(NSAttributedString(string: "╱\(data.total)", attributes: [
+            .font: small, .foregroundColor: Palette.subtle
         ]))
 
         statusItem.button?.attributedTitle = title
