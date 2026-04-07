@@ -135,9 +135,36 @@ func sparkline(_ values: [Double]) -> String {
     return String(values.map { chars[min(Int($0 / mx * 7), 7)] })
 }
 
+// ── Golden Ratio Color Palette ──────────────────────────────────
+// Colors derived from φ (1.618) angle rotation on HSB wheel
+// Creates naturally harmonious, sacred-geometry-inspired palette
+
+struct Palette {
+    // Primary — warm amber/gold (0° base)
+    static let gold     = NSColor(calibratedHue: 0.105, saturation: 0.85, brightness: 0.95, alpha: 1)  // #F2A900
+    static let amber    = NSColor(calibratedHue: 0.083, saturation: 0.75, brightness: 1.00, alpha: 1)  // warm amber
+
+    // φ rotation 1 (137.5°) — teal/cyan
+    static let teal     = NSColor(calibratedHue: 0.490, saturation: 0.60, brightness: 0.85, alpha: 1)
+
+    // φ rotation 2 (275°) — violet
+    static let violet   = NSColor(calibratedHue: 0.764, saturation: 0.45, brightness: 0.88, alpha: 1)
+
+    // φ rotation 3 (52.5°) — lime green
+    static let sage     = NSColor(calibratedHue: 0.340, saturation: 0.55, brightness: 0.80, alpha: 1)
+
+    // Status colors (softer than system)
+    static let alive    = NSColor(calibratedHue: 0.380, saturation: 0.65, brightness: 0.82, alpha: 1)  // soft green
+    static let warn     = NSColor(calibratedHue: 0.065, saturation: 0.80, brightness: 0.95, alpha: 1)  // warm orange
+    static let danger   = NSColor(calibratedHue: 0.010, saturation: 0.70, brightness: 0.90, alpha: 1)  // soft red
+    static let muted    = NSColor(calibratedHue: 0.000, saturation: 0.00, brightness: 0.55, alpha: 1)  // gray
+    static let subtle   = NSColor(calibratedHue: 0.000, saturation: 0.00, brightness: 0.42, alpha: 1)  // darker gray
+    static let text     = NSColor.labelColor
+}
+
 // ── Styled menu items ───────────────────────────────────────────
 
-func styledItem(_ title: String, color: NSColor = .labelColor, bold: Bool = false,
+func styledItem(_ title: String, color: NSColor = Palette.text, bold: Bool = false,
                 mono: Bool = false, action: Selector? = nil, target: AnyObject? = nil) -> NSMenuItem {
     let item = NSMenuItem()
     let font: NSFont = mono
@@ -184,26 +211,27 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Smart compact title — no sparkline, clean info
-        let icon = data.active > 0 ? "⚡" : "○"
         let title = NSMutableAttributedString()
         let mono = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-        let monoLight = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let small = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
 
-        // Icon + active count (bold orange when active)
-        let iconColor: NSColor = data.active > 0 ? .systemOrange : .secondaryLabelColor
-        title.append(NSAttributedString(string: "\(icon) \(data.active)", attributes: [
-            .font: mono, .foregroundColor: iconColor
+        // Active indicator
+        let activeColor = data.active > 0 ? Palette.gold : Palette.muted
+        title.append(NSAttributedString(string: data.active > 0 ? "⚡" : "◇", attributes: [
+            .font: mono, .foregroundColor: activeColor
         ]))
 
-        // Separator + total
-        title.append(NSAttributedString(string: "/\(data.total) ", attributes: [
-            .font: monoLight, .foregroundColor: NSColor.secondaryLabelColor
+        // Active count (gold) / total (muted)
+        title.append(NSAttributedString(string: " \(data.active)", attributes: [
+            .font: mono, .foregroundColor: activeColor
+        ]))
+        title.append(NSAttributedString(string: "·\(data.total) ", attributes: [
+            .font: small, .foregroundColor: Palette.subtle
         ]))
 
-        // CPU with color coding
+        // CPU — color shifts from sage→amber→danger based on load
         let cpuInt = Int(data.cpu)
-        let cpuColor: NSColor = cpuInt > 50 ? .systemRed : (cpuInt > 20 ? .systemYellow : .labelColor)
+        let cpuColor: NSColor = cpuInt > 60 ? Palette.danger : (cpuInt > 25 ? Palette.amber : Palette.sage)
         title.append(NSAttributedString(string: "\(cpuInt)%", attributes: [
             .font: mono, .foregroundColor: cpuColor
         ]))
@@ -216,19 +244,19 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
         menu.autoenablesItems = false
 
         guard let ipc = fetchIpc() else {
-            menu.addItem(styledItem("⚡ AGIMON — offline", color: .systemRed, bold: true))
+            menu.addItem(styledItem("⚡ AGIMON — offline", color: Palette.danger, bold: true))
             statusItem.menu = menu
             return
         }
 
         // ── Header ──
         menu.addItem(styledItem(
-            "⚡ AGIMON — \(ipc.active) aktiv  \(ipc.idle) idle  \(ipc.total) total",
-            color: .systemOrange, bold: true
+            "⚡ AGIMON — \(ipc.active) aktiv · \(ipc.idle) idle · \(ipc.total) total",
+            color: Palette.gold, bold: true
         ))
         menu.addItem(styledItem(
             "CPU \(String(format: "%.1f", ipc.cpu))%  │  RAM \(ipc.mem_mb)MB  │  \(ipc.procs.count) Procs",
-            color: .secondaryLabelColor, mono: true
+            color: Palette.muted, mono: true
         ))
 
         // Watchdog alerts
@@ -237,18 +265,18 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
             for line in watchOut.components(separatedBy: "\n") where line.contains("●") {
                 let clean = line.replacingOccurrences(of: "\u{1b}[31m●\u{1b}[0m ", with: "")
                     .trimmingCharacters(in: .whitespaces)
-                menu.addItem(styledItem("⚠️ \(clean)", color: .systemRed))
+                menu.addItem(styledItem("⚠️ \(clean)", color: Palette.danger))
             }
         }
         menu.addItem(.separator())
 
         // ── Processes by category ──
         let cats: [(String, String, NSColor)] = [
-            ("claude", "💻 Claude Code", .systemOrange),
-            ("dev-tool", "🔧 Dev Tools", .systemBlue),
-            ("ide", "📝 IDEs", .systemPurple),
-            ("runtime", "⚙️ Runtimes", .secondaryLabelColor),
-            ("infra", "🐳 Infra", .systemTeal),
+            ("claude", "💻 Claude Code", Palette.gold),
+            ("dev-tool", "🔧 Dev Tools", Palette.teal),
+            ("ide", "📝 IDEs", Palette.violet),
+            ("runtime", "⚙️ Runtimes", Palette.muted),
+            ("infra", "🐳 Infra", Palette.sage),
         ]
         for (cat, label, color) in cats {
             let catProcs = ipc.procs.filter { $0.cat == cat }
@@ -260,7 +288,7 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
                 let icon = p.s == "active" ? "●" : "○"
                 let item = styledItem(
                     "\(icon) \(p.label)  \(String(format: "%5.1f", p.cpu))%  \(p.mem)MB  PID:\(p.pid)",
-                    color: p.s == "active" ? .systemGreen : .secondaryLabelColor, mono: true
+                    color: p.s == "active" ? Palette.alive : Palette.muted, mono: true
                 )
                 let procSub = NSMenu()
                 let infoItem = NSMenuItem(title: "🔍 Details + Netzwerk", action: #selector(showProcessDetail(_:)), keyEquivalent: "")
@@ -293,7 +321,7 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
         let recentSessions = sessions.filter { !$0.active }
 
         if !activeSessions.isEmpty {
-            let sec = styledItem("⚡ Aktive Sessions (\(activeSessions.count))", color: .systemGreen, bold: true)
+            let sec = styledItem("⚡ Aktive Sessions (\(activeSessions.count))", color: Palette.alive, bold: true)
             let sub = NSMenu()
             for s in activeSessions {
                 let ag = s.agents > 0 ? " • \(s.agents)ag" : ""
@@ -307,7 +335,7 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
         }
 
         if !recentSessions.isEmpty {
-            let sec = styledItem("📜 Letzte Sessions (\(recentSessions.count))", color: .secondaryLabelColor, bold: true)
+            let sec = styledItem("📜 Letzte Sessions (\(recentSessions.count))", color: Palette.subtle, bold: true)
             let sub = NSMenu()
             for s in recentSessions.prefix(15) {
                 let item = NSMenuItem(title: "○ \(s.message)", action: #selector(resumeSession(_:)), keyEquivalent: "")
@@ -432,10 +460,10 @@ class AgimonDelegate: NSObject, NSApplicationDelegate {
 
         let text = NSMutableAttributedString()
         let mono = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        text.append(NSAttributedString(string: "── Prozess ──\n", attributes: [.font: mono, .foregroundColor: NSColor.systemOrange]))
+        text.append(NSAttributedString(string: "── Prozess ──\n", attributes: [.font: mono, .foregroundColor: Palette.gold]))
         text.append(NSAttributedString(string: info + "\n\n", attributes: [.font: mono, .foregroundColor: NSColor.labelColor]))
-        text.append(NSAttributedString(string: "── Netzwerk ──\n", attributes: [.font: mono, .foregroundColor: NSColor.systemOrange]))
-        text.append(NSAttributedString(string: net.isEmpty ? "Keine Verbindungen" : net, attributes: [.font: mono, .foregroundColor: NSColor.systemCyan]))
+        text.append(NSAttributedString(string: "── Netzwerk ──\n", attributes: [.font: mono, .foregroundColor: Palette.gold]))
+        text.append(NSAttributedString(string: net.isEmpty ? "Keine Verbindungen" : net, attributes: [.font: mono, .foregroundColor: Palette.teal]))
 
         let tv = NSTextField(frame: NSRect(x: 0, y: 0, width: 500, height: 200))
         tv.attributedStringValue = text
