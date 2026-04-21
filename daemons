@@ -44,7 +44,8 @@ daemons_list() {
   cat <<EOF
 com.supersynergy.synapsed|🧠 Synapse Brain|$LA_DIR/com.supersynergy.synapsed.plist|synapsed -f|synapsed -f $HOME/.synapse/brain.db -s /tmp/synapse.sock
 de.supersynergy.telepathy|📡 Telepathy|$LA_DIR/de.supersynergy.telepathy.plist|telepathy_daemon.py|python3 $HOME/.claude/scripts/telepathy_daemon.py
-com.supersynergy.agimon|⚡ AGIMON Menubar|$LA_DIR/com.supersynergy.agimon.plist|menubar.py|$AGIMON_DIR/.venv/bin/python3 $AGIMON_DIR/menubar.py
+com.supersynergy.agimon-menubar|⚡ Menubar (Python)|$LA_DIR/com.supersynergy.agimon-menubar.plist|menubar.py|$AGIMON_DIR/.venv/bin/python3 $AGIMON_DIR/menubar.py
+com.supersynergy.agimon|🖥 AGIMON.app (Swift)|$LA_DIR/com.supersynergy.agimon.plist|agimon-menu|/Applications/AGIMON.app/Contents/MacOS/agimon-menu
 EOF
 }
 
@@ -101,7 +102,8 @@ _resolve() {
   case "$1" in
     synapse|synapsed|brain)  echo "com.supersynergy.synapsed" ;;
     telepathy|tp)            echo "de.supersynergy.telepathy" ;;
-    agimon|menubar)          echo "com.supersynergy.agimon" ;;
+    menubar|python|py)       echo "com.supersynergy.agimon-menubar" ;;
+    agimon|swift|app)        echo "com.supersynergy.agimon" ;;
     *)                       echo "$1" ;;
   esac
 }
@@ -310,21 +312,21 @@ cmd_bootstrap() {
   else
     echo "  synapsed plist present"
   fi
-  if [ ! -f "$LA_DIR/com.supersynergy.agimon.plist" ]; then
+  if [ ! -f "$LA_DIR/com.supersynergy.agimon-menubar.plist" ]; then
     _write_agimon_plist
   else
-    echo "  agimon plist present"
+    echo "  agimon-menubar plist present"
   fi
 }
 
 _write_agimon_plist() {
-  local plist="$LA_DIR/com.supersynergy.agimon.plist"
+  local plist="$LA_DIR/com.supersynergy.agimon-menubar.plist"
   cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.supersynergy.agimon</string>
+  <key>Label</key><string>com.supersynergy.agimon-menubar</string>
   <key>ProgramArguments</key>
   <array>
     <string>$AGIMON_DIR/.venv/bin/python3</string>
@@ -337,7 +339,7 @@ _write_agimon_plist() {
 </dict>
 </plist>
 EOF
-  echo "  ${G}✓ wrote $plist${N}"
+  printf '  %b✓ wrote %s%b\n' "$G" "$plist" "$N"
 }
 
 _help() {
