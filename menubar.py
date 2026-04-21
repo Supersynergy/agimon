@@ -775,11 +775,30 @@ class ClaudeMenubar(rumps.App):
     def _render_menu(self, data: dict) -> None:
         self.menu.clear()
 
+        # Focus mode: hide Costs/Network/AI-Services/Quick-Links clutter
+        focus = False
+        try:
+            import json as _j
+            cfg = _j.loads(Path("~/.agimon/config.json").expanduser().read_text())
+            focus = (cfg.get("menubar") or {}).get("focus_mode", False)
+        except Exception:
+            pass
+        self._focus_mode = focus
+
         si         = data.get("si", {})
         sessions   = data.get("sessions", [])
         active_ids = data.get("active_ids", set())
         tel_events = data.get("tel_events", [])
         tel_count  = data.get("tel_count", 0)
+
+        # ── 🔮 Smart Launcher (command palette, always on top) ──────
+        self.menu.add(rumps.MenuItem(
+            "🔮 Smart Launcher…",
+            callback=lambda _: self._smart_launcher(sessions, active_ids,
+                                                    data.get("terms", []),
+                                                    tel_events)
+        ))
+        self.menu.add(None)
 
         # ── 🚀 Aktionen (top-level quick actions) ───────────────────
         self._add_actions_section()
@@ -797,22 +816,28 @@ class ClaudeMenubar(rumps.App):
         self._add_terminals_section(data.get("terms", []))
         self.menu.add(None)
 
-        # ── 💰 Kosten ───────────────────────────────────────────────
-        self._add_costs_section(data.get("costs", {}), data.get("days", []))
+        if not focus:
+            # ── 💰 Kosten ───────────────────────────────────────────
+            self._add_costs_section(data.get("costs", {}), data.get("days", []))
 
-        # ── 🌐 Netzwerk ─────────────────────────────────────────────
-        self._add_network_section(data)
+            # ── 🌐 Netzwerk ─────────────────────────────────────────
+            self._add_network_section(data)
 
-        # ── ⚡ AI Services ───────────────────────────────────────────
-        self._add_ai_services_section()
-        self.menu.add(None)
+            # ── ⚡ AI Services ───────────────────────────────────────
+            self._add_ai_services_section()
+            self.menu.add(None)
 
-        # ── ⭐ Projekte ──────────────────────────────────────────────
-        self._add_projects_section()
+            # ── ⭐ Projekte ──────────────────────────────────────────
+            self._add_projects_section()
 
-        # ── 🔗 Quick Links ───────────────────────────────────────────
-        self._add_quick_links_section()
-        self.menu.add(None)
+            # ── 🔗 Quick Links ───────────────────────────────────────
+            self._add_quick_links_section()
+            self.menu.add(None)
+        else:
+            # Focus mode: only the essentials + a hint
+            self.menu.add(rumps.MenuItem("🎯 Focus Mode ●  (Settings → umschalten)",
+                                         callback=self._toggle_focus_mode))
+            self.menu.add(None)
 
         # ── ⚙ Settings / Daemons ────────────────────────────────────
         self._add_settings_section()
@@ -824,6 +849,115 @@ class ClaudeMenubar(rumps.App):
 
     # ── Section builders ────────────────────────────────────────────
 
+    # ── 🔮 Smart Launcher (fuzzy command palette) ───────────────────
+
+    def _smart_launcher(self, sessions, active_ids, terms, tel_events) -> None:
+        """One dialog, fuzzy-match across sessions / windows / procs / actions.
+        Returns a ranked list of candidates to jump to with 1 click."""
+        candidates: list[tuple[str, str, object]] = []
+        # sessions
+        for s in sessions[:30]:
+            label = f"🟢 {_proj_name(s.project)} · {_trunc(s.first_user_message or '…', 40)}"
+            candidates.append((label, "session",
+                               lambda s=s: _resume_session(s.session_id, s.project)(None)))
+        # ghostty windows
+        for t in terms:
+            label = f"💻 {_window_label(t)}"
+            candidates.append((label, "terminal",
+                               lambda t=t: focus_terminal(t.get("window_index", 1),
+                                                          t.get("tab_index", 1))))
+        # telepathy events
+        for ev in tel_events[:10]:
+            label = f"📡 {ev.sid8} · {ev.cwd} · {ev.body[:40]}"
+            candidates.append((label, "telepathy",
+                               lambda sid=ev.sid8: _telepathy_jump(sid)(None)))
+        # projects
+        for name, path, url in PROJECTS:
+            label = f"⭐ {name}"
+            candidates.append((label, "project",
+                               lambda p=path: _launch_claude_in(p)(None)))
+        # quick actions
+        actions = [
+            ("⚡ MiniMax Prompt",    _minimax_prompt_dialog()),
+            ("🧠 Ollama Prompt",     _ollama_prompt_dialog("gemma3:270m")),
+            ("🔎 uda ask",           _uda_ask_dialog()),
+            ("📡 syn search",        _syn_search_dialog()),
+            ("🌐 hyperfetch URL",    _hyperfetch_dialog()),
+            ("☀️ Morgen-Brief",      self._daily_brief),
+            ("🎯 Focus Mode Toggle", self._toggle_focus_mode),
+        ]
+        for label, cb in actions:
+            candidates.append((label, "action", cb))
+
+        # Dialog: show hint, user types query, we filter client-side via
+        # re-prompt if empty result. Keep it simple — single dialog now,
+        # future: NSMenu-based picker.
+        query = _input_dialog(
+            "🔮 Smart Launcher",
+            message="Fuzzy-Search · Session / Window / Telepathy / Projekt / Aktion",
+            placeholder="z.B. synapse oder telepathy oder prompt",
+        )
+        if not query:
+            return
+        q = query.lower().strip()
+        matches = [(lbl, kind, cb) for (lbl, kind, cb) in candidates
+                   if q in lbl.lower()]
+        if not matches:
+            _simple_alert("🔮 Kein Treffer", f"Nichts gefunden für: {query}")
+            return
+        if len(matches) == 1:
+            try: matches[0][2](None)
+            except TypeError: matches[0][2]()
+            return
+        # Multiple matches → list in alert with numeric choice
+        lines = [f"{i+1}. [{kind}] {lbl}" for i, (lbl, kind, _) in enumerate(matches[:9])]
+        _result_alert(f"🔮 {len(matches)} Treffer für '{query}'",
+                      "\n".join(lines) + "\n\n→ Tipp: genauer suchen für direct-jump",
+                      copy_button=False)
+
+    # ── ☀️ Daily Brief (MiniMax) ────────────────────────────────────
+
+    def _daily_brief(self, _=None):
+        def gen():
+            sessions = load_recent_sessions(30)
+            active_ids = get_active_session_ids()
+            lines = []
+            for s in sessions[:12]:
+                lines.append(f"- {_proj_name(s.project)}: {s.first_user_message or '…'}")
+            prompt = (
+                "Du bist ein produktiver Tages-Coach. Basierend auf diesen "
+                "Claude Code Sessions der letzten 30 Slots, schreibe einen "
+                "Morgen-Brief auf Deutsch:\n"
+                "1) Was wurde gestern erreicht? (3 Bullets)\n"
+                "2) Was ist offen / aktiv? (2 Bullets)\n"
+                "3) Fokus-Empfehlung für heute (1 Satz)\n\n"
+                "Sessions:\n" + "\n".join(lines)
+            )
+            return _llm.minimax_chat(prompt, timeout=20) or "(kein Ergebnis)"
+
+        rumps.notification("AGIMON", "☀️ Morgen-Brief",
+                           "MiniMax analysiert deine Sessions…")
+
+        def done(result):
+            _result_alert("☀️ Morgen-Brief", result, copy_button=True)
+
+        _llm.run_async(gen, done)
+
+    # ── 🎯 Focus Mode (hide noise) ──────────────────────────────────
+
+    def _toggle_focus_mode(self, _=None):
+        import json as _j
+        cfg_path = Path("~/.agimon/config.json").expanduser()
+        try:
+            cfg = _j.loads(cfg_path.read_text())
+        except Exception:
+            cfg = {}
+        mb = cfg.setdefault("menubar", {})
+        mb["focus_mode"] = not mb.get("focus_mode", False)
+        cfg_path.write_text(_j.dumps(cfg, indent=2))
+        state = "AN" if mb["focus_mode"] else "AUS"
+        rumps.notification("AGIMON", "🎯 Focus Mode", f"{state} — restart menubar für Effekt")
+
     def _add_actions_section(self) -> None:
         sec = rumps.MenuItem("🚀 Aktionen", callback=_noop)
         sec.add(rumps.MenuItem("⚡ Prompt → MiniMax",        callback=_minimax_prompt_dialog()))
@@ -833,6 +967,9 @@ class ClaudeMenubar(rumps.App):
         sec.add(rumps.MenuItem("🔎 uda ask …",               callback=_uda_ask_dialog()))
         sec.add(rumps.MenuItem("📡 syn search …",            callback=_syn_search_dialog()))
         sec.add(rumps.MenuItem("🌐 hyperfetch URL",           callback=_hyperfetch_dialog()))
+        sec.add(None)
+        sec.add(rumps.MenuItem("☀️ Morgen-Brief (MiniMax)",    callback=self._daily_brief))
+        sec.add(rumps.MenuItem("🎯 Focus Mode umschalten",      callback=self._toggle_focus_mode))
         sec.add(None)
         sec.add(rumps.MenuItem("📥 miniflux-digest heute",
                                callback=_run_in_ghostty_cmd("miniflux-digest --since 24h")))
