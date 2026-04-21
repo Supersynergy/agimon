@@ -1,7 +1,7 @@
 #!/bin/bash
 # Auto-index Claude sessions into Qdrant after each session.
 # Hook: PostToolUse or session-end
-cd /Users/master/claude-monitor
+cd /Users/master/projects/agimon
 .venv/bin/python3 -c "
 from collectors.sessions import load_recent_sessions
 from collectors.qdrant_store import index_session

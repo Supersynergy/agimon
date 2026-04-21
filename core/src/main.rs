@@ -6,6 +6,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::io::{Read, Write};
 use std::process::Command;
 use sysinfo::{ProcessesToUpdate, System};
 
@@ -158,16 +159,43 @@ fn restart_service(name: &str) -> bool {
     Command::new("sh").arg("-c").arg(cmd).spawn().is_ok()
 }
 
+fn check_http_service(url: &str) -> bool {
+    // Fast TCP connect check — works for Docker containers too
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::time::Duration;
+    let host_port = url
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .split('/')
+        .next()
+        .unwrap_or("");
+    let host_port = if host_port.contains(':') { host_port.to_string() } else { format!("{host_port}:80") };
+    // Resolve hostname (handles "localhost" → 127.0.0.1)
+    if let Ok(mut addrs) = host_port.to_socket_addrs() {
+        if let Some(addr) = addrs.next() {
+            return TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok();
+        }
+    }
+    false
+}
+
 fn watchdog(sys: &System) -> Vec<String> {
     let mut alerts = Vec::new();
     for &(svc, keyword, _) in SERVICES {
-        // Skip colima/ssh — they're tunnels, not real services to monitor
         if svc == "colima" { continue; }
-        let s = check_service(sys, keyword);
-        if !s.running {
+        // For qdrant/docker: check TCP port, not process name
+        let running = match svc {
+            "qdrant"  => check_http_service("http://localhost:6333"),
+            "docker"  => {
+                // Docker Desktop doesn't appear as "docker" process — check daemon socket
+                let s = check_service(sys, "Docker Desktop");
+                s.running || check_service(sys, "com.docker").running
+                    || std::path::Path::new("/var/run/docker.sock").exists()
+            }
+            _ => check_service(sys, keyword).running,
+        };
+        if !running {
             alerts.push(format!("DOWN: {svc} is not running"));
-        } else if s.cpu > 90.0 {
-            alerts.push(format!("HIGH CPU: {svc} at {:.1}%", s.cpu));
         }
     }
     for (_, proc) in sys.processes() {
@@ -208,6 +236,8 @@ enum Cmd {
     Sessions { #[arg(default_value_t = 20)] limit: usize },
     /// Compact JSON for menubar IPC
     Ipc,
+    /// Fast JSON for menubar (IPC + Budget + Watchdog + MLX)
+    MenuData,
 }
 
 fn init_sys() -> System {
@@ -550,12 +580,123 @@ fn main() {
                 let tok = if s.input_tokens > 0 {
                     format!(" {}tok", fmt_tokens(s.input_tokens + s.output_tokens))
                 } else { String::new() };
-                let msg = if s.first_message.is_empty() { "..." } else { &s.first_message };
-                println!("{ic} {}{ag}{tok}", &msg[..msg.len().min(55)]);
+                let msg = if s.first_message.is_empty() { "...".to_string() } else { s.first_message.chars().take(55).collect::<String>() };
+                println!("{ic} {msg}{ag}{tok}");
                 if !s.tools.is_empty() {
                     println!("  \x1b[90mTools: {}\x1b[0m", s.tools.join(", "));
                 }
             }
+        }
+        Cmd::MenuData => {
+            // Fix #1: Proper double-refresh with sleep for accurate CPU measurement
+            let mut sys = System::new_all();
+            sys.refresh_all();
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            sys.refresh_processes(ProcessesToUpdate::All, true);
+            let procs = collect(&sys);
+            let wd_alerts = watchdog(&sys);
+            
+            // Fix #2: Use direct TCP port check for Ollama (HTTP check was unreliable)
+            let mut mlx_avail = false;
+            let mut mlx_models: Vec<String> = Vec::new();
+            let ollama_up = std::net::TcpStream::connect_timeout(
+                &"127.0.0.1:11434".parse().unwrap(),
+                std::time::Duration::from_millis(300),
+            ).is_ok();
+            if ollama_up {
+                mlx_avail = true;
+                // Fetch model list via raw HTTP
+                if let Ok(mut stream) = std::net::TcpStream::connect("127.0.0.1:11434") {
+                    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(800)));
+                    let req = "GET /api/tags HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+                    let _ = stream.write_all(req.as_bytes());
+                    let mut resp = String::new();
+                    let _ = stream.read_to_string(&mut resp);
+                    if let Some(idx) = resp.find("\r\n\r\n") {
+                        let json_str = &resp[idx+4..];
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+                            if let Some(arr) = v["models"].as_array() {
+                                for m in arr.iter().take(5) {
+                                    if let Some(n) = m["name"].as_str() {
+                                        mlx_models.push(n.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Fix #3: Budget - correct field name is "estimated_cost_usd", also read from stats
+            let mut daily_spent = 0.0_f64;
+            let mut daily_budget = 50.0_f64;
+            let mut budget_alerts: Vec<String> = Vec::new();
+            
+            if let Ok(home) = std::env::var("HOME") {
+                // Try claude's own stats first (most reliable)
+                let stats_file = std::path::PathBuf::from(&home).join(".claude/stats/today-summary.json");
+                if let Ok(content) = std::fs::read_to_string(&stats_file) {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if let Some(t) = v["today"].as_f64() {
+                            daily_spent = t;
+                        }
+                    }
+                }
+                
+                // Fallback: sum costs.jsonl with correct field name
+                if daily_spent == 0.0 {
+                    let cost_file = std::path::PathBuf::from(&home).join(".claude/metrics/costs.jsonl");
+                    if let Ok(content) = std::fs::read_to_string(&cost_file) {
+                        let today = now_iso().split('T').next().unwrap_or("").to_string();
+                        for line in content.lines() {
+                            if !line.contains(&today) { continue; }
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                                // Fix: correct field name
+                                if let Some(c) = v["estimated_cost_usd"].as_f64().or(v["cost"].as_f64()) {
+                                    daily_spent += c;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Read budget config
+                let config_file = std::path::PathBuf::from(&home).join(".claude/agimon_budget.json");
+                if let Ok(content) = std::fs::read_to_string(&config_file) {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if let Some(b) = v["daily_budget_limit"].as_f64() {
+                            daily_budget = b;
+                        }
+                    }
+                }
+            }
+            
+            if daily_spent >= daily_budget {
+                budget_alerts.push(format!("⚠️ Budget überschritten: ${:.2} / ${:.0}", daily_spent, daily_budget));
+            } else if daily_spent >= daily_budget * 0.8 {
+                budget_alerts.push(format!("⚠️ Budget fast voll: ${:.2} / ${:.0}", daily_spent, daily_budget));
+            }
+            
+            let json = serde_json::json!({
+                "procs": procs.iter().map(|p| serde_json::json!({
+                    "pid": p.pid, "label": p.label, "cat": p.category,
+                    "cpu": p.cpu_percent, "mem": p.mem_mb, "s": p.status,
+                })).collect::<Vec<_>>(),
+                "watchdog": wd_alerts,
+                "mlx": {
+                    "available": mlx_avail,
+                    "count": mlx_models.len(),
+                    "models": mlx_models,
+                },
+                "budget": {
+                    "spent": daily_spent,
+                    "budget": daily_budget,
+                    "remaining": daily_budget - daily_spent,
+                    "alerts": budget_alerts,
+                    "at_risk": 0
+                }
+            });
+            println!("{}", json);
         }
         Cmd::Ipc => {
             let procs = collect(&sys);
@@ -565,7 +706,7 @@ fn main() {
                 "total": procs.len(),
                 "cpu": procs.iter().map(|p| p.cpu_percent).sum::<f32>(),
                 "mem_mb": procs.iter().map(|p| p.mem_mb).sum::<u64>(),
-                "procs": procs.iter().take(20).map(|p| serde_json::json!({
+                "procs": procs.iter().map(|p| serde_json::json!({
                     "pid": p.pid, "label": p.label, "cat": p.category,
                     "cpu": p.cpu_percent, "mem": p.mem_mb, "s": p.status,
                 })).collect::<Vec<_>>(),

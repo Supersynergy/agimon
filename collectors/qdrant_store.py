@@ -4,7 +4,7 @@ import hashlib
 from datetime import datetime
 
 QDRANT_URL = "http://localhost:6333"
-COLLECTION = "claude_monitor"
+COLLECTION = "agimon"
 VECTOR_DIM = 384
 
 _client = None

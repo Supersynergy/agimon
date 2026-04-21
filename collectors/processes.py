@@ -43,13 +43,15 @@ def get_all_dev_processes() -> list[ProcessInfo]:
         return []
     procs = []
     for p in data.get("procs", []):
+        cpu_val = p.get("cpu")
+        mem_val = p.get("mem")
         procs.append(ProcessInfo(
-            pid=p.get("pid", 0),
-            cpu_percent=p.get("cpu", 0.0),
-            mem_mb=p.get("mem", 0),
-            status=p.get("s", "idle"),
-            label=p.get("label", ""),
-            category=p.get("cat", ""),
+            pid=p.get("pid") or 0,
+            cpu_percent=cpu_val if cpu_val is not None else 0.0,
+            mem_mb=mem_val if mem_val is not None else 0,
+            status=p.get("s") or "idle",
+            label=p.get("label") or "",
+            category=p.get("cat") or "",
         ))
     return procs
 
@@ -72,13 +74,15 @@ def get_system_summary() -> dict:
     all_procs = []
     by_category: dict[str, list[ProcessInfo]] = {}
     for p in data.get("procs", []):
+        cpu_val = p.get("cpu")
+        mem_val = p.get("mem")
         pi = ProcessInfo(
-            pid=p.get("pid", 0),
-            cpu_percent=p.get("cpu", 0.0),
-            mem_mb=p.get("mem", 0),
-            status=p.get("s", "idle"),
-            label=p.get("label", ""),
-            category=p.get("cat", ""),
+            pid=p.get("pid") or 0,
+            cpu_percent=cpu_val if cpu_val is not None else 0.0,
+            mem_mb=mem_val if mem_val is not None else 0,
+            status=p.get("s") or "idle",
+            label=p.get("label") or "",
+            category=p.get("cat") or "",
         )
         all_procs.append(pi)
         by_category.setdefault(pi.category, []).append(pi)

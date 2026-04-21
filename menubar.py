@@ -541,6 +541,114 @@ class ClaudeMenubar(rumps.App):
             fav.add(pi)
         self.menu.add(fav)
 
+        # ━━ AI Tools ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        self.menu.add(None)
+        ai = rumps.MenuItem("⚡ AI Tools", callback=_noop)
+
+        # Ping services for status badges
+        import urllib.request as _ur
+        def _ping(url):
+            try: _ur.urlopen(url, timeout=1); return True
+            except: return False
+
+        ol_ok = _ping("http://localhost:11434/")
+        qd_ok = _ping("http://localhost:6333/collections")
+        ol_dot = "🟢" if ol_ok else "🔴"
+        qd_dot = "🟣" if qd_ok else "🔴"
+
+        # AI Prompt
+        def _open_ai_prompt(_):
+            subprocess.Popen([str(Path.home() / ".local/bin/ai-prompt")])
+        ai_p = rumps.MenuItem(f"⚡ AI Prompt  {ol_dot} Ollama", callback=_open_ai_prompt)
+        ai.add(ai_p)
+
+        # Qdrant Search
+        def _open_qdrant(_):
+            subprocess.Popen([str(Path.home() / ".local/bin/ai-search")])
+        ai.add(rumps.MenuItem(f"🔎 Qdrant Suche  {qd_dot} {('online' if qd_ok else 'offline')}", callback=_open_qdrant))
+
+        # Net Dashboard
+        def _open_net_dash(_):
+            script = '''tell application "Ghostty" to activate
+delay 0.2
+tell application "System Events"
+  tell process "ghostty"
+    click menu item "New Tab" of menu "File" of menu bar item "File" of menu bar 1
+  end tell
+end tell
+delay 0.3
+tell application "System Events"
+  keystroke "net-dashboard"
+  key code 36
+end tell'''
+            subprocess.Popen(["osascript", "-e", script])
+        ai.add(rumps.MenuItem("📡 Net Dashboard", callback=_open_net_dash))
+
+        # Qdrant CLI Search
+        def _qdrant_cli(_):
+            script = '''tell application "Ghostty" to activate
+delay 0.2
+tell application "System Events"
+  tell process "ghostty"
+    click menu item "New Tab" of menu "File" of menu bar item "File" of menu bar 1
+  end tell
+end tell
+delay 0.3
+tell application "System Events"
+  keystroke "qdrant-search"
+  key code 36
+end tell'''
+            subprocess.Popen(["osascript", "-e", script])
+        ai.add(rumps.MenuItem("🔍 Qdrant CLI Suche", callback=_qdrant_cli))
+
+        ai.add(None)
+
+        # Start/Stop services
+        if not ol_ok:
+            def _start_ollama(_):
+                subprocess.Popen(["/opt/homebrew/bin/ollama", "serve"])
+            ai.add(rumps.MenuItem("▶ Ollama starten", callback=_start_ollama))
+        if not qd_ok:
+            def _start_qdrant(_):
+                subprocess.Popen(["docker", "run", "-d",
+                    "-p", "6333:6333", "-p", "6334:6334",
+                    "-v", f"{Path.home()}/qdrant_storage:/qdrant/storage",
+                    "qdrant/qdrant"])
+                rumps.notification("Qdrant", "Docker Container", "wird gestartet…")
+            ai.add(rumps.MenuItem("▶ Qdrant (Docker) starten", callback=_start_qdrant))
+
+        # Ollama models submenu
+        if ol_ok:
+            try:
+                import json as _json
+                r = _ur.urlopen("http://localhost:11434/api/tags", timeout=2)
+                models = _json.loads(r.read()).get("models", [])
+                if models:
+                    mdl_menu = rumps.MenuItem("🦙 Modelle", callback=_noop)
+                    for m in models[:10]:
+                        name = m.get("name", "?")
+                        sz = m.get("size", 0) // (1024**3)
+                        mdl_menu.add(rumps.MenuItem(f"  {name}  ({sz}GB)", callback=_noop))
+                    ai.add(mdl_menu)
+            except Exception:
+                pass
+
+        # Qdrant collections submenu
+        if qd_ok:
+            try:
+                import json as _json
+                r = _ur.urlopen("http://localhost:6333/collections", timeout=2)
+                colls = _json.loads(r.read()).get("result", {}).get("collections", [])
+                if colls:
+                    qd_menu = rumps.MenuItem(f"🗄 Collections ({len(colls)})", callback=_noop)
+                    for c in colls[:12]:
+                        qd_menu.add(rumps.MenuItem(f"  {c['name']}", callback=_noop))
+                    ai.add(qd_menu)
+            except Exception:
+                pass
+
+        self.menu.add(ai)
+
         # ━━ Quick Links ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         links = rumps.MenuItem("\U0001f517 Quick Links", callback=_noop)
         LINKS = [

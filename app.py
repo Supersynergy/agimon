@@ -1,4 +1,4 @@
-"""Claude Monitor — Universal Dashboard for Claude Code + Ghostty + Network."""
+"""AGIMON — AGI-grade Monitor for AI Coding Agents."""
 from __future__ import annotations
 
 from textual import work
@@ -24,6 +24,8 @@ from collectors.sessions import load_recent_sessions, get_active_session_ids
 from collectors.network import get_network_summary
 from collectors.windows import get_all_windows, focus_window
 from collectors.qdrant_store import search_sessions, get_collection_stats
+from collectors.cost_predictor import get_budget_status, predict_session_trajectory
+from collectors.watchdog import AGIMONWatchdog
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -464,7 +466,7 @@ class SearchView(VerticalScroll):
         if not results:
             self.app.call_from_thread(
                 status.update,
-                "Keine Ergebnisse. (Qdrant 'claude_monitor' leer?)"
+                "Keine Ergebnisse. (Qdrant noch leer? → agimon index)"
             )
             return
 
@@ -479,6 +481,66 @@ class SearchView(VerticalScroll):
         self.app.call_from_thread(
             status.update, f"{len(results)} Ergebnisse"
         )
+
+
+# ── Budget Tab ──────────────────────────────────────────────────────
+
+
+class BudgetView(VerticalScroll):
+    """Cost prediction, budget status, and session burn rates."""
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="budget-summary")
+        yield Static("" , id="budget-sessions")
+
+    def refresh_data(self) -> None:
+        summary_widget = self.query_one("#budget-summary", Static)
+        sessions_widget = self.query_one("#budget-sessions", Static)
+
+        try:
+            budget = get_budget_status()
+            remaining_icon = "✅" if budget.daily_remaining > 0 else "🚨"
+            trend_bar_width = 30
+            spent_pct = min(1.0, budget.daily_spent / max(budget.daily_budget, 1))
+            filled = int(spent_pct * trend_bar_width)
+            bar = "█" * filled + "░" * (trend_bar_width - filled)
+
+            lines = [
+                f"  ⚡ Daily Budget: ${budget.daily_budget:.2f}",
+                f"  💸 Spent:         ${budget.daily_spent:.2f}  [{bar}] {spent_pct*100:.0f}%",
+                f"  {remaining_icon} Remaining:     ${budget.daily_remaining:.2f}",
+                f"  🔮 Projected EOD: ${budget.projected_daily:.2f}",
+                f"",
+            ]
+            if budget.alerts:
+                lines.append("  ⚠️  Alerts:")
+                for alert in budget.alerts:
+                    lines.append(f"     • {alert}")
+                lines.append("")
+            if budget.sessions_at_risk:
+                lines.append(f"  🔴 Sessions at risk: {', '.join(budget.sessions_at_risk)}")
+
+            summary_widget.update("\n".join(lines))
+        except Exception as e:
+            summary_widget.update(f"  Budget error: {e}")
+
+        try:
+            sessions = load_recent_sessions(limit=15)
+            active_ids = get_active_session_ids()
+            session_lines = ["  📊 Active Session Costs:\n"]
+            for s in sessions:
+                if s.session_id in active_ids:
+                    pred = predict_session_trajectory(s)
+                    icons = {"stable": "✅", "rising": "⚠️", "spiking": "🚨"}
+                    icon = icons.get(pred.trend, "❓")
+                    session_lines.append(
+                        f"  {icon} {s.session_id[:12]}..."
+                        f"  ${pred.current_cost:.2f} → ${pred.predicted_cost:.2f}"
+                        f"  [{pred.trend}]  {pred.recommendation[:60]}"
+                    )
+            sessions_widget.update("\n".join(session_lines))
+        except Exception as e:
+            sessions_widget.update(f"  Session cost error: {e}")
 
 
 # ── Main App ─────────────────────────────────────────────────────────
@@ -575,10 +637,10 @@ DataTable > .datatable--odd-row {
 
 
 class ClaudeMonitor(App):
-    """Claude Code Activity Monitor."""
+    """AGIMON — AGI-grade Monitor for AI Coding Agents."""
 
     CSS = STYLESHEET
-    TITLE = "Claude Monitor"
+    TITLE = "⚡ AGIMON v1.2.0"
     SUB_TITLE = ""
     BINDINGS = [
         Binding("q", "quit", "Beenden"),
@@ -587,9 +649,10 @@ class ClaudeMonitor(App):
         Binding("2", "tab_instances", "Instanzen", priority=True),
         Binding("3", "tab_stats", "Statistik", priority=True),
         Binding("4", "tab_network", "Netzwerk", priority=True),
-        Binding("5", "tab_ghostty", "Ghostty", priority=True),
-        Binding("6", "tab_windows", "Fenster", priority=True),
-        Binding("7", "tab_search", "Suche", priority=True),
+        Binding("5", "tab_budget", "Budget", priority=True),
+        Binding("6", "tab_ghostty", "Ghostty", priority=True),
+        Binding("7", "tab_windows", "Fenster", priority=True),
+        Binding("8", "tab_search", "Suche", priority=True),
     ]
 
     _refresh_timer: Timer | None = None
@@ -606,6 +669,8 @@ class ClaudeMonitor(App):
                 yield StatsView(id="stats-view")
             with TabPane("Netzwerk", id="tab-network"):
                 yield NetworkView(id="network-view")
+            with TabPane("Budget", id="tab-budget"):
+                yield BudgetView(id="budget-view")
             with TabPane("Ghostty", id="tab-ghostty"):
                 yield GhosttyView(id="ghostty-view")
             with TabPane("Fenster", id="tab-windows"):
@@ -675,6 +740,9 @@ class ClaudeMonitor(App):
             elif active == "tab-ghostty":
                 view = self.query_one("#ghostty-view", GhosttyView)
                 self.call_from_thread(view.refresh_data, terminals)
+            elif active == "tab-budget":
+                view = self.query_one("#budget-view", BudgetView)
+                self.call_from_thread(view.refresh_data)
             elif active == "tab-windows":
                 wins = get_all_windows()
                 view = self.query_one("#windows-view", WindowsView)
@@ -693,6 +761,9 @@ class ClaudeMonitor(App):
 
     def action_tab_network(self) -> None:
         self.query_one("#tabs", TabbedContent).active = "tab-network"
+
+    def action_tab_budget(self) -> None:
+        self.query_one("#tabs", TabbedContent).active = "tab-budget"
 
     def action_tab_ghostty(self) -> None:
         self.query_one("#tabs", TabbedContent).active = "tab-ghostty"

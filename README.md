@@ -121,6 +121,10 @@ ln -sf $(pwd)/agimon ~/.local/bin/agimon
 | `agimon search "auth refactor"` | Semantic search over all past sessions |
 | `agimon index` | Auto-index current sessions into Qdrant |
 | `agimon history "query"` | Find what worked before |
+| `agimon predict` | **Cost prediction** - see which sessions will exceed budget |
+| `agimon mlx` | **MLX routing** - analyze local model opportunities |
+| `agimon watchdog` | **Health check** all components |
+| `agimon watchdog-daemon` | **Background monitor** with auto-recovery |
 
 ### Launch
 

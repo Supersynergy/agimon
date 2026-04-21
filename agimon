@@ -8,7 +8,7 @@ set -euo pipefail
 AGIMON_DIR="$(cd "$(dirname "$0")" && pwd)"
 PY="$AGIMON_DIR/.venv/bin/python3"
 CORE="$HOME/.local/bin/agimon-core"
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 # Colors
 R='\033[0;31m' G='\033[0;32m' Y='\033[0;33m' B='\033[0;34m'
@@ -50,6 +50,14 @@ _help() {
     echo -e "  ${C}agimon search ${D}<query>${N}   Qdrant Semantic Search"
     echo -e "  ${C}agimon index${N}            Sessions in Qdrant indexieren"
     echo -e "  ${C}agimon history ${D}<query>${N}  Vergangene Tasks durchsuchen"
+    echo -e "  ${C}agimon telepathy${N}        📡 Cross-session feed (Synapse)"
+    echo -e "  ${C}agimon tp ${D}<sid8>${N}        Jump direkt zu Session (focus/resume)"
+    echo ""
+    echo -e "${W}COST CONTROL & MLX${N}"
+    echo -e "  ${C}agimon predict${N}          Cost prediction & budget status"
+    echo -e "  ${C}agimon mlx${N}              MLX routing analysis & savings"
+    echo -e "  ${C}agimon watchdog${N}         Health check all components"
+    echo -e "  ${C}agimon watchdog-daemon${N}  Start background health monitor"
     echo ""
     echo -e "${W}LAUNCH${N}"
     echo -e "  ${C}agimon tui${N}              Textual Dashboard starten"
@@ -234,6 +242,16 @@ _run_osascript('''tell application \"Ghostty\"
 end tell''')
 print('\033[0;32m⚡ Session resumed\033[0m')
 " ;;
+
+    # ── Synapse Telepathy (cross-session memory) ──
+    telepathy|tp)    shift; (cd "$AGIMON_DIR" && "$PY" -m collectors.telepathy "$@") ;;
+
+    # ── Cost Prediction & Budget ──
+    predict|budget)   "$PY" -c "from collectors.cost_predictor import format_cost_report; print(format_cost_report())" ;;
+    mlx|local)       "$PY" -c "from collectors.mlx_router import get_routing_report; print(get_routing_report())" ;;
+    watchdog|health) "$PY" collectors/watchdog.py ;;
+    watchdog-daemon) "$PY" collectors/watchdog.py daemon &
+                      echo -e "${G}Watchdog daemon started (PID: $!)${N}" ;;
 
     # ── Quick links ──
     qdrant)         open "http://localhost:6333/dashboard" ;;
