@@ -246,6 +246,9 @@ print('\033[0;32m⚡ Session resumed\033[0m')
     # ── Synapse Telepathy (cross-session memory) ──
     telepathy|tp)    shift; (cd "$AGIMON_DIR" && "$PY" -m collectors.telepathy "$@") ;;
 
+    # ── Daemon control ──
+    daemons|bg|d)    shift; "$AGIMON_DIR/daemons" "$@" ;;
+
     # ── Cost Prediction & Budget ──
     predict|budget)   "$PY" -c "from collectors.cost_predictor import format_cost_report; print(format_cost_report())" ;;
     mlx|local)       "$PY" -c "from collectors.mlx_router import get_routing_report; print(get_routing_report())" ;;

@@ -1,0 +1,386 @@
+#!/usr/bin/env bash
+# ╔═══════════════════════════════════════════════════════════════╗
+# ║  agimon daemons — bg process control                          ║
+# ║  status / start / stop / enable / disable / logs / settings   ║
+# ╚═══════════════════════════════════════════════════════════════╝
+set -euo pipefail
+
+AGIMON_DIR="$(cd "$(dirname "$0")" && pwd)"
+LA_DIR="$HOME/Library/LaunchAgents"
+CONFIG_DIR="$HOME/.agimon"
+CONFIG_JSON="$CONFIG_DIR/config.json"
+
+R='\033[0;31m' G='\033[0;32m' Y='\033[0;33m' B='\033[0;34m'
+M='\033[0;35m' C='\033[0;36m' W='\033[1;37m' D='\033[0;90m'
+N='\033[0m' BOLD='\033[1m'
+
+mkdir -p "$CONFIG_DIR"
+[ -f "$CONFIG_JSON" ] || cat > "$CONFIG_JSON" <<'EOF'
+{
+  "telepathy": {
+    "poll_seconds": 4,
+    "idle_cutoff_seconds": 1800,
+    "max_lines_per_tick": 500
+  },
+  "menubar": {
+    "refresh_seconds": 5,
+    "telepathy_rows": 10,
+    "session_rows": 15,
+    "enable_minimax_summary": true,
+    "enable_ollama_tag": true,
+    "default_ollama_model": "gemma3:270m"
+  },
+  "synapse": {
+    "sock": "/tmp/synapse.sock",
+    "db": "~/.synapse/brain.db"
+  }
+}
+EOF
+
+# ── Daemon registry ───────────────────────────────────────────────
+# Each entry: label|display|plist|proc-pattern|manual-start-cmd
+
+daemons_list() {
+  cat <<EOF
+com.supersynergy.synapsed|🧠 Synapse Brain|$LA_DIR/com.supersynergy.synapsed.plist|synapsed -f|synapsed -f $HOME/.synapse/brain.db -s /tmp/synapse.sock
+de.supersynergy.telepathy|📡 Telepathy|$LA_DIR/de.supersynergy.telepathy.plist|telepathy_daemon.py|python3 $HOME/.claude/scripts/telepathy_daemon.py
+com.supersynergy.agimon|⚡ AGIMON Menubar|$LA_DIR/com.supersynergy.agimon.plist|menubar.py|$AGIMON_DIR/.venv/bin/python3 $AGIMON_DIR/menubar.py
+EOF
+}
+
+_pid_for() {
+  # $1 = proc-pattern
+  pgrep -f "$1" 2>/dev/null | head -1
+}
+
+_is_loaded() {
+  # $1 = label
+  launchctl list 2>/dev/null | awk '{print $3}' | grep -qx "$1"
+}
+
+_is_enabled() {
+  # $1 = plist path
+  [ -f "$1" ]
+}
+
+# ── Commands ─────────────────────────────────────────────────────
+
+cmd_status() {
+  echo -e "${M}╔══════════════════════════════════════════════════════╗${N}"
+  echo -e "${M}║${W}  ⚡ agimon daemons                                  ${M}║${N}"
+  echo -e "${M}╚══════════════════════════════════════════════════════╝${N}"
+  echo ""
+  printf "${D}%-20s %-10s %-10s %-10s %-10s${N}\n" "DAEMON" "RUN" "AUTO" "PID" "UPTIME"
+  echo -e "${D}──────────────────────────────────────────────────────${N}"
+  while IFS='|' read -r label display plist pattern startcmd; do
+    pid=$(_pid_for "$pattern")
+    if [ -n "$pid" ]; then
+      run="${G}●${N} live"
+      uptime=$(ps -p "$pid" -o etime= 2>/dev/null | tr -d ' ')
+    else
+      run="${R}○${N} off"
+      uptime="-"
+      pid="-"
+    fi
+    if _is_enabled "$plist"; then
+      auto="${G}on${N}"
+    else
+      auto="${D}off${N}"
+    fi
+    # Strip color for display alignment
+    plain_display=$(echo -e "$display" | sed 's/[[:space:]]*$//')
+    printf "%-22s " "$plain_display"
+    printf "%-14b %-14b %-10s %-10s\n" "$run" "$auto" "$pid" "$uptime"
+  done < <(daemons_list)
+  echo ""
+  echo -e "${D}hint: agimon daemons start|stop|restart|enable|disable|logs <name>${N}"
+}
+
+_resolve() {
+  # $1 = short name (synapse / telepathy / menubar / agimon) or full label
+  case "$1" in
+    synapse|synapsed|brain)  echo "com.supersynergy.synapsed" ;;
+    telepathy|tp)            echo "de.supersynergy.telepathy" ;;
+    agimon|menubar)          echo "com.supersynergy.agimon" ;;
+    *)                       echo "$1" ;;
+  esac
+}
+
+_entry_for() {
+  # $1 = label → echo the registry line
+  local lbl="$1"
+  daemons_list | grep "^${lbl}|" | head -1
+}
+
+cmd_start() {
+  local label; label=$(_resolve "${1:?daemon name required}")
+  local entry; entry=$(_entry_for "$label")
+  [ -z "$entry" ] && { echo -e "${R}unknown daemon: $label${N}"; exit 2; }
+  IFS='|' read -r _ display plist pattern startcmd <<< "$entry"
+  pid=$(_pid_for "$pattern")
+  if [ -n "$pid" ]; then
+    echo -e "${Y}$display bereits aktiv (PID $pid)${N}"
+    return 0
+  fi
+  if _is_enabled "$plist"; then
+    launchctl load -w "$plist" 2>/dev/null || launchctl load "$plist"
+    sleep 1
+    echo -e "${G}✓ $display gestartet via launchd${N}"
+  else
+    nohup bash -c "$startcmd" > /tmp/agimon-$label.log 2>&1 &
+    disown
+    sleep 1
+    echo -e "${G}✓ $display gestartet (manual, log: /tmp/agimon-$label.log)${N}"
+  fi
+}
+
+cmd_stop() {
+  local label; label=$(_resolve "${1:?daemon name required}")
+  local entry; entry=$(_entry_for "$label")
+  [ -z "$entry" ] && { echo -e "${R}unknown daemon: $label${N}"; exit 2; }
+  IFS='|' read -r _ display plist pattern _ <<< "$entry"
+  if _is_enabled "$plist" && _is_loaded "$label"; then
+    launchctl unload "$plist" 2>/dev/null || true
+    echo -e "${G}✓ $display via launchd gestoppt${N}"
+  fi
+  # also kill any manual instance
+  pkill -f "$pattern" 2>/dev/null || true
+  sleep 1
+  pid=$(_pid_for "$pattern")
+  if [ -z "$pid" ]; then
+    echo -e "${G}✓ $display beendet${N}"
+  else
+    echo -e "${Y}hartes kill: PID $pid${N}"
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+}
+
+cmd_restart() {
+  cmd_stop "$1"
+  sleep 1
+  cmd_start "$1"
+}
+
+cmd_enable() {
+  local label; label=$(_resolve "${1:?daemon name required}")
+  local entry; entry=$(_entry_for "$label")
+  [ -z "$entry" ] && { echo -e "${R}unknown daemon${N}"; exit 2; }
+  IFS='|' read -r _ display plist pattern _ <<< "$entry"
+  if [ ! -f "$plist" ]; then
+    echo -e "${R}keine plist-datei: $plist${N}"
+    echo -e "${D}→ bootstrap required. see integrations/claude-code/telepathy/install.sh${N}"
+    exit 2
+  fi
+  launchctl load -w "$plist" 2>/dev/null || launchctl load "$plist"
+  echo -e "${G}✓ $display autostart aktiviert${N}"
+}
+
+cmd_disable() {
+  local label; label=$(_resolve "${1:?daemon name required}")
+  local entry; entry=$(_entry_for "$label")
+  [ -z "$entry" ] && { echo -e "${R}unknown daemon${N}"; exit 2; }
+  IFS='|' read -r _ display plist _ _ <<< "$entry"
+  launchctl unload -w "$plist" 2>/dev/null || true
+  echo -e "${G}✓ $display autostart deaktiviert${N}"
+}
+
+cmd_logs() {
+  local label; label=$(_resolve "${1:?daemon name required}")
+  local entry; entry=$(_entry_for "$label")
+  [ -z "$entry" ] && { echo -e "${R}unknown daemon${N}"; exit 2; }
+  IFS='|' read -r _ display plist _ _ <<< "$entry"
+  # try: plist-declared stdout/stderr, fallback to /tmp
+  local stdout_f stderr_f
+  stdout_f=$(plutil -extract StandardOutPath raw "$plist" 2>/dev/null || true)
+  stderr_f=$(plutil -extract StandardErrorPath raw "$plist" 2>/dev/null || true)
+  # telepathy extra
+  [ -z "$stdout_f" ] && [ -f "$HOME/.claude/telepathy/daemon.log" ] && stdout_f="$HOME/.claude/telepathy/daemon.log"
+  [ -z "$stdout_f" ] && [ -f "/tmp/agimon-$label.log" ] && stdout_f="/tmp/agimon-$label.log"
+  echo -e "${C}=== $display — logs ===${N}"
+  for f in "$stdout_f" "$stderr_f"; do
+    [ -z "$f" ] && continue
+    # expand ~
+    f="${f/#\~/$HOME}"
+    [ -f "$f" ] || continue
+    echo -e "${D}── $f ──${N}"
+    tail -n 30 "$f"
+    echo ""
+  done
+}
+
+cmd_config() {
+  case "${1:-show}" in
+    show)  cat "$CONFIG_JSON" | python3 -m json.tool ;;
+    edit)  "${EDITOR:-vi}" "$CONFIG_JSON" ;;
+    path)  echo "$CONFIG_JSON" ;;
+    get)   python3 -c "import json,sys; d=json.load(open('$CONFIG_JSON')); p='${2:-}'.split('.'); x=d
+[x:=x[k] for k in p if k]
+print(x)" ;;
+    set)
+      # agimon daemons config set telepathy.poll_seconds 2
+      python3 - <<PY
+import json, sys
+p = "$CONFIG_JSON"
+d = json.load(open(p))
+keys = "${2:-}".split(".")
+val = "${3:-}"
+# try to coerce number / bool
+try: val = json.loads(val)
+except Exception: pass
+ref = d
+for k in keys[:-1]: ref = ref.setdefault(k, {})
+ref[keys[-1]] = val
+json.dump(d, open(p, "w"), indent=2)
+print(f"\033[0;32m✓ {'.'.join(keys)} = {val}\033[0m")
+PY
+      ;;
+    *) echo -e "${R}config: show|edit|path|get <key>|set <key> <val>${N}" ;;
+  esac
+}
+
+cmd_premium() {
+  # Interactive premium settings (fzf-style numeric picker)
+  cat <<EOF
+
+${M}╔═══ Premium Settings ═══╗${N}
+
+${W}Telepathy${N}
+  1. Poll interval (aktuell: $(_cfg telepathy.poll_seconds)s)
+  2. Idle cutoff (aktuell: $(_cfg telepathy.idle_cutoff_seconds)s)
+  3. Max lines/tick (aktuell: $(_cfg telepathy.max_lines_per_tick))
+
+${W}Menubar${N}
+  4. Refresh interval (aktuell: $(_cfg menubar.refresh_seconds)s)
+  5. Telepathy rows (aktuell: $(_cfg menubar.telepathy_rows))
+  6. Session rows (aktuell: $(_cfg menubar.session_rows))
+  7. MiniMax summary $(_bool_cfg menubar.enable_minimax_summary)
+  8. Ollama auto-tag $(_bool_cfg menubar.enable_ollama_tag)
+  9. Default Ollama model (aktuell: $(_cfg menubar.default_ollama_model))
+
+${W}Actions${N}
+  s. Save & restart affected daemons
+  q. Quit
+
+EOF
+  read -p "Auswahl: " choice
+  case "$choice" in
+    1) read -p "  poll_seconds [1-60]: " v; cmd_config set telepathy.poll_seconds "$v" ;;
+    2) read -p "  idle_cutoff_seconds [60-7200]: " v; cmd_config set telepathy.idle_cutoff_seconds "$v" ;;
+    3) read -p "  max_lines_per_tick [50-5000]: " v; cmd_config set telepathy.max_lines_per_tick "$v" ;;
+    4) read -p "  refresh_seconds [1-60]: " v; cmd_config set menubar.refresh_seconds "$v" ;;
+    5) read -p "  telepathy_rows [1-30]: " v; cmd_config set menubar.telepathy_rows "$v" ;;
+    6) read -p "  session_rows [1-50]: " v; cmd_config set menubar.session_rows "$v" ;;
+    7) _toggle_bool menubar.enable_minimax_summary ;;
+    8) _toggle_bool menubar.enable_ollama_tag ;;
+    9) read -p "  model (gemma3:270m|smollm2:135m|phi4-mini): " v
+       cmd_config set menubar.default_ollama_model "\"$v\"" ;;
+    s) cmd_restart telepathy; cmd_restart menubar ;;
+    q|"") ;;
+    *) echo "?" ;;
+  esac
+}
+
+_cfg() {
+  python3 -c "import json; d=json.load(open('$CONFIG_JSON')); k='$1'.split('.'); x=d
+[x:=x[i] for i in k]
+print(x)" 2>/dev/null
+}
+
+_bool_cfg() {
+  v=$(_cfg "$1")
+  [ "$v" = "True" ] && echo -e "${G}●${N} on" || echo -e "${D}○${N} off"
+}
+
+_toggle_bool() {
+  v=$(_cfg "$1")
+  if [ "$v" = "True" ]; then newv=false; else newv=true; fi
+  cmd_config set "$1" "$newv"
+}
+
+cmd_bootstrap() {
+  # Install plists for agimon + telepathy (if not present)
+  echo "bootstrapping launchd agents…"
+  if [ ! -f "$LA_DIR/de.supersynergy.telepathy.plist" ]; then
+    bash ~/projects/synapse/integrations/claude-code/telepathy/install.sh || echo "telepathy install failed"
+  else
+    echo "  telepathy plist present"
+  fi
+  if [ ! -f "$LA_DIR/com.supersynergy.synapsed.plist" ]; then
+    echo "  ${Y}synapsed plist missing — see synapsed docs${N}"
+  else
+    echo "  synapsed plist present"
+  fi
+  if [ ! -f "$LA_DIR/com.supersynergy.agimon.plist" ]; then
+    _write_agimon_plist
+  else
+    echo "  agimon plist present"
+  fi
+}
+
+_write_agimon_plist() {
+  local plist="$LA_DIR/com.supersynergy.agimon.plist"
+  cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.supersynergy.agimon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$AGIMON_DIR/.venv/bin/python3</string>
+    <string>$AGIMON_DIR/menubar.py</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/agimon-menubar.log</string>
+  <key>StandardErrorPath</key><string>/tmp/agimon-menubar.err</string>
+</dict>
+</plist>
+EOF
+  echo "  ${G}✓ wrote $plist${N}"
+}
+
+_help() {
+  cat <<EOF
+${M}agimon daemons${N} — bg process control
+
+  ${C}status${N}                       Übersicht aller daemons
+  ${C}start|stop|restart${N} <name>    start/stop/restart einzelnes daemon
+  ${C}enable|disable${N} <name>        autostart via launchd ein/aus
+  ${C}logs${N} <name>                  letzte 30 log-zeilen
+  ${C}config${N} show|edit|path        config ansehen/editieren
+  ${C}config set${N} <key> <val>       single-value setzen (z.B. telepathy.poll_seconds 2)
+  ${C}premium${N}                      interactive settings menu
+  ${C}bootstrap${N}                    fehlende plists installieren
+  ${C}all-start|all-stop${N}           alle gleichzeitig
+
+${D}daemons:${N}  synapse (brain)  ·  telepathy  ·  agimon (menubar)
+EOF
+}
+
+cmd_all_start() {
+  for d in synapse telepathy agimon; do cmd_start "$d" || true; done
+}
+
+cmd_all_stop() {
+  for d in agimon telepathy synapse; do cmd_stop "$d" || true; done
+}
+
+# ── Dispatch ─────────────────────────────────────────────────────
+
+case "${1:-status}" in
+  status|st|"")         cmd_status ;;
+  start)                shift; cmd_start "$@" ;;
+  stop)                 shift; cmd_stop "$@" ;;
+  restart)              shift; cmd_restart "$@" ;;
+  enable)               shift; cmd_enable "$@" ;;
+  disable)              shift; cmd_disable "$@" ;;
+  logs|log)             shift; cmd_logs "$@" ;;
+  config|conf|cfg)      shift; cmd_config "$@" ;;
+  premium|settings)     cmd_premium ;;
+  bootstrap|install)    cmd_bootstrap ;;
+  all-start|up)         cmd_all_start ;;
+  all-stop|down)        cmd_all_stop ;;
+  help|-h|--help)       _help ;;
+  *) echo "unknown: $1"; _help; exit 2 ;;
+esac

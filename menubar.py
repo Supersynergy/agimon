@@ -149,6 +149,27 @@ def _styled_alert(title: str, lines: list[tuple[str, object]],
     return alert.runModal()
 
 
+def _daemon_show_logs(key: str, daemons_bin: str) -> None:
+    try:
+        r = subprocess.run([daemons_bin, "logs", key], capture_output=True,
+                           text=True, timeout=5)
+        import re
+        out = re.sub(r'\x1b\[[0-9;]*m', '', r.stdout + r.stderr)
+        _result_alert(f"📝 Logs · {key}", out or "(leer)", copy_button=False)
+    except Exception as e:
+        _simple_alert("❌ logs", str(e))
+
+
+def _run_show(cmd: str) -> None:
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=8)
+        import re
+        out = re.sub(r'\x1b\[[0-9;]*m', '', r.stdout + r.stderr)
+        _result_alert(f"$ {cmd}", out or "(leer)")
+    except Exception as e:
+        _simple_alert("❌", str(e))
+
+
 def _result_alert(title: str, content: str,
                   copy_button: bool = True,
                   max_chars: int = 20_000) -> None:
@@ -766,6 +787,10 @@ class ClaudeMenubar(rumps.App):
         self._add_quick_links_section()
         self.menu.add(None)
 
+        # ── ⚙ Settings / Daemons ────────────────────────────────────
+        self._add_settings_section()
+        self.menu.add(None)
+
         # ── Footer ──────────────────────────────────────────────────
         self.menu.add(rumps.MenuItem("🧨 Alle Claude stoppen", callback=self._stop_all))
         self.menu.add(rumps.MenuItem("Beenden", callback=rumps.quit_application))
@@ -1065,6 +1090,135 @@ class ClaudeMenubar(rumps.App):
             else:
                 sec.add(rumps.MenuItem(label, callback=_open_url(url)))
         self.menu.add(sec)
+
+    def _add_settings_section(self) -> None:
+        """⚙ Background daemons control + premium settings."""
+        DAEMONS = [
+            ("synapse",   "🧠 Synapse Brain",   "synapsed -f"),
+            ("telepathy", "📡 Telepathy",       "telepathy_daemon.py"),
+            ("agimon",    "⚡ Menubar",         "menubar.py"),
+        ]
+        sec = rumps.MenuItem("⚙ Einstellungen", callback=_noop)
+
+        # Daemons submenu
+        dm = rumps.MenuItem("🔌 Daemons", callback=_noop)
+        daemons_bin = os.path.join(SCRIPT_DIR, "daemons")
+
+        def _daemon_cmd(action: str, name: str):
+            def cb(_):
+                try:
+                    r = subprocess.run(
+                        [daemons_bin, action, name],
+                        capture_output=True, text=True, timeout=15,
+                    )
+                    out = (r.stdout + r.stderr).strip() or f"(no output) rc={r.returncode}"
+                    # strip ANSI
+                    import re
+                    out = re.sub(r'\x1b\[[0-9;]*m', '', out)
+                    rumps.notification("AGIMON daemons", f"{action} {name}", out[:100])
+                except Exception as e:
+                    _simple_alert("❌ daemons", str(e))
+            return cb
+
+        def _daemon_status_dialog(_):
+            try:
+                r = subprocess.run([daemons_bin, "status"], capture_output=True,
+                                   text=True, timeout=5)
+                import re
+                out = re.sub(r'\x1b\[[0-9;]*m', '', r.stdout)
+                _result_alert("🔌 Daemon Status", out, copy_button=False)
+            except Exception as e:
+                _simple_alert("❌ status", str(e))
+
+        dm.add(rumps.MenuItem("📋 Status-Übersicht", callback=_daemon_status_dialog))
+        dm.add(None)
+
+        for key, display, _pat in DAEMONS:
+            sub = rumps.MenuItem(display, callback=_noop)
+            sub.add(rumps.MenuItem("▶ Start",    callback=_daemon_cmd("start", key)))
+            sub.add(rumps.MenuItem("⏹ Stop",     callback=_daemon_cmd("stop", key)))
+            sub.add(rumps.MenuItem("🔄 Restart", callback=_daemon_cmd("restart", key)))
+            sub.add(None)
+            sub.add(rumps.MenuItem("✅ Autostart an",  callback=_daemon_cmd("enable", key)))
+            sub.add(rumps.MenuItem("🚫 Autostart aus", callback=_daemon_cmd("disable", key)))
+            sub.add(None)
+            sub.add(rumps.MenuItem("📝 Logs",          callback=lambda _, k=key: _daemon_show_logs(k, daemons_bin)))
+            dm.add(sub)
+
+        dm.add(None)
+        dm.add(rumps.MenuItem("⬆ Alle starten", callback=_daemon_cmd("all-start", "")))
+        dm.add(rumps.MenuItem("⬇ Alle stoppen", callback=_daemon_cmd("all-stop", "")))
+        dm.add(rumps.MenuItem("🔧 Bootstrap (plists installieren)",
+                              callback=_daemon_cmd("bootstrap", "")))
+        sec.add(dm)
+
+        # Premium settings submenu
+        cfg = rumps.MenuItem("💎 Premium Settings", callback=_noop)
+        cfg.add(rumps.MenuItem("📝 Config editieren", callback=self._open_config_editor))
+        cfg.add(rumps.MenuItem("📋 Config anzeigen",  callback=self._show_config))
+        cfg.add(None)
+        cfg.add(rumps.MenuItem("🔢 Menubar Refresh setzen", callback=self._set_refresh))
+        cfg.add(rumps.MenuItem("📡 Telepathy Poll setzen",  callback=self._set_tel_poll))
+        cfg.add(rumps.MenuItem("🧠 Ollama Default-Modell",  callback=self._set_ollama_model))
+        sec.add(cfg)
+
+        # Watchdog + diagnostics
+        diag = rumps.MenuItem("🩺 Diagnose", callback=_noop)
+        diag.add(rumps.MenuItem("🔍 Health Check", callback=self._run_watchdog))
+        diag.add(rumps.MenuItem("📊 syn stats",    callback=lambda _: _run_show("syn stats")))
+        diag.add(rumps.MenuItem("📊 ollama list",  callback=lambda _: _run_show("ollama list")))
+        sec.add(diag)
+
+        self.menu.add(sec)
+
+    def _open_config_editor(self, _=None):
+        subprocess.Popen(["open", "-t", os.path.expanduser("~/.agimon/config.json")])
+
+    def _show_config(self, _=None):
+        try:
+            content = Path("~/.agimon/config.json").expanduser().read_text()
+            _result_alert("💎 agimon config", content, copy_button=True)
+        except Exception as e:
+            _simple_alert("❌", str(e))
+
+    def _set_refresh(self, _=None):
+        val = _input_dialog("Menubar Refresh (Sekunden)",
+                            message="Wie oft soll das Menü aktualisiert werden?",
+                            default="5")
+        if val and val.isdigit():
+            subprocess.run([os.path.join(SCRIPT_DIR, "daemons"),
+                           "config", "set", "menubar.refresh_seconds", val])
+            rumps.notification("AGIMON", "Refresh gesetzt", f"{val}s — restart menubar")
+
+    def _set_tel_poll(self, _=None):
+        val = _input_dialog("Telepathy Poll (Sekunden)",
+                            message="Wie oft soll der Daemon pollen? (4 = default)",
+                            default="4")
+        if val and val.isdigit():
+            subprocess.run([os.path.join(SCRIPT_DIR, "daemons"),
+                           "config", "set", "telepathy.poll_seconds", val])
+            rumps.notification("AGIMON", "Telepathy Poll", f"{val}s — restart telepathy")
+
+    def _set_ollama_model(self, _=None):
+        val = _input_dialog("Ollama Default-Modell",
+                            message="gemma3:270m · smollm2:135m · smollm2:360m · phi4-mini",
+                            default="gemma3:270m")
+        if val:
+            subprocess.run([os.path.join(SCRIPT_DIR, "daemons"),
+                           "config", "set", "menubar.default_ollama_model",
+                           f'"{val}"'])
+            rumps.notification("AGIMON", "Modell", val)
+
+    def _run_watchdog(self, _=None):
+        try:
+            r = subprocess.run([os.path.join(SCRIPT_DIR, ".venv/bin/python3"),
+                               os.path.join(SCRIPT_DIR, "collectors/watchdog.py")],
+                              capture_output=True, text=True, timeout=12)
+            import re
+            out = re.sub(r'\x1b\[[0-9;]*m', '', r.stdout + r.stderr)
+            _result_alert("🩺 Health Check", out or "(leer)", copy_button=False)
+        except Exception as e:
+            _simple_alert("❌", str(e))
 
     # ── App actions ─────────────────────────────────────────────────
 
