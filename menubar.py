@@ -149,23 +149,81 @@ def _styled_alert(title: str, lines: list[tuple[str, object]],
     return alert.runModal()
 
 
-def _simple_alert(title: str, message: str) -> None:
-    _styled_alert(title, [(message, NSColor.labelColor())])
-
-
-def _input_dialog(title: str, placeholder: str = "") -> str | None:
-    from AppKit import NSPanel, NSTextField as NSTFld, NSApplication
+def _result_alert(title: str, content: str,
+                  copy_button: bool = True,
+                  max_chars: int = 20_000) -> None:
+    """Scrollable result window via NSTextView in NSScrollView.
+    Button 'Kopieren' copies content to clipboard (default).
+    Handles long LLM outputs without overflowing the alert."""
+    from AppKit import NSScrollView, NSTextView, NSMakeSize
+    content = (content or "(leer)").strip()[:max_chars]
     alert = NSAlert.alloc().init()
     alert.setMessageText_(title)
-    alert.addButtonWithTitle_("Senden")
-    alert.addButtonWithTitle_("Abbrechen")
-    field = NSTFld.alloc().initWithFrame_(NSMakeRect(0, 0, 380, 24))
-    field.setPlaceholderString_(placeholder)
-    alert.setAccessoryView_(field)
-    alert.window().setInitialFirstResponder_(field)
+    alert.setAlertStyle_(1)
+    if copy_button:
+        alert.addButtonWithTitle_("Kopieren")
+    alert.addButtonWithTitle_("Schließen")
+    icon = NSImage.alloc().initByReferencingFile_(_ICON_PATH)
+    if icon:
+        alert.setIcon_(icon)
+
+    # Size scales with content length (capped)
+    lines = content.count("\n") + max(1, len(content) // 70)
+    h = min(520, max(160, lines * 16))
+    w = 520
+
+    scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+    scroll.setHasVerticalScroller_(True)
+    scroll.setHasHorizontalScroller_(False)
+    scroll.setAutohidesScrollers_(True)
+    scroll.setBorderType_(2)  # NSBezelBorder
+
+    tv = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+    tv.setEditable_(False)
+    tv.setSelectable_(True)
+    tv.setRichText_(False)
+    tv.setFont_(NSFont.monospacedSystemFontOfSize_weight_(12.0, 0.0))
+    tv.setTextColor_(NSColor.labelColor())
+    tv.setString_(content)
+    tv.setTextContainerInset_(NSMakeSize(6.0, 6.0))
+    scroll.setDocumentView_(tv)
+    alert.setAccessoryView_(scroll)
+
     r = alert.runModal()
-    if r == NSAlertFirstButtonReturn:
-        return field.stringValue()
+    if copy_button and r == NSAlertFirstButtonReturn:
+        subprocess.run(["pbcopy"], input=content.encode(), check=False)
+        rumps.notification("AGIMON", "In Zwischenablage", _trunc(content, 60))
+
+
+def _simple_alert(title: str, message: str) -> None:
+    """Short info alert. For long/LLM output use _result_alert."""
+    if len(message) > 400 or message.count("\n") > 6:
+        _result_alert(title, message)
+    else:
+        _styled_alert(title, [(message, NSColor.labelColor())])
+
+
+def _input_dialog(title: str, placeholder: str = "",
+                  message: str = "", default: str = "",
+                  multiline: bool = False) -> str | None:
+    """Polished input via rumps.Window (wraps NSAlert + editable field).
+    multiline=True → larger textbox for prompts/messages."""
+    dims = (420, 140) if multiline else (420, 24)
+    win = rumps.Window(
+        message=message or placeholder,
+        title=title,
+        default_text=default,
+        ok="Senden",
+        cancel="Abbrechen",
+        dimensions=dims,
+    )
+    icon = NSImage.alloc().initByReferencingFile_(_ICON_PATH)
+    if icon:
+        win._alert.setIcon_(icon)
+    resp = win.run()
+    if resp.clicked:
+        val = (resp.text or "").strip()
+        return val or None
     return None
 
 
@@ -377,21 +435,35 @@ def _async_ollama_alert(prompt: str, title: str, model: str = "gemma3:270m"):
 
 def _minimax_prompt_dialog(title: str = "⚡ Prompt → MiniMax"):
     def cb(_):
-        text = _input_dialog(title, "Deine Frage…")
-        if text and text.strip():
-            _async_minimax_alert(text.strip(), title)(None)
+        text = _input_dialog(
+            title,
+            message="MiniMax M2.7-highspeed · ~1-3s · Ergebnis in Alert",
+            placeholder="z.B. fasse zusammen was ich heute gemacht habe",
+            multiline=True,
+        )
+        if text:
+            _async_minimax_alert(text, title)(None)
     return cb
 
 def _ollama_prompt_dialog(model: str = "gemma3:270m"):
     def cb(_):
-        text = _input_dialog(f"🧠 Prompt → {model}", "Deine Frage…")
-        if text and text.strip():
-            _async_ollama_alert(text.strip(), f"🧠 {model}", model)(None)
+        text = _input_dialog(
+            f"🧠 Prompt → {model}",
+            message=f"Lokal via Ollama · {model} · sub-second",
+            placeholder="kurze frage oder klassifikation",
+            multiline=True,
+        )
+        if text:
+            _async_ollama_alert(text, f"🧠 {model}", model)(None)
     return cb
 
 def _uda_ask_dialog():
     def cb(_):
-        text = _input_dialog("🔎 uda ask …", "Suchanfrage…")
+        text = _input_dialog(
+            "🔎 uda ask",
+            message="Durchsucht deine Qdrant-KB (161k+ chunks)",
+            placeholder="z.B. ideen für saas landing page",
+        )
         if text and text.strip():
             subprocess.Popen(["osascript", "-e", f'''
                 tell application "Ghostty"
@@ -405,7 +477,11 @@ def _uda_ask_dialog():
 
 def _syn_search_dialog():
     def cb(_):
-        text = _input_dialog("📡 syn search …", "Suchbegriff…")
+        text = _input_dialog(
+            "📡 syn search",
+            message="FTS5 + Vektor-Suche im Synapse Brain",
+            placeholder="suchbegriff",
+        )
         if text and text.strip():
             subprocess.Popen(["osascript", "-e", f'''
                 tell application "Ghostty"
@@ -419,7 +495,11 @@ def _syn_search_dialog():
 
 def _hyperfetch_dialog():
     def cb(_):
-        text = _input_dialog("🌐 hyperfetch URL", "https://…")
+        text = _input_dialog(
+            "🌐 hyperfetch URL",
+            message="Anti-Bot Fetch (camoufox) · 0.07s · Markdown-Output",
+            placeholder="https://…",
+        )
         if text and text.strip():
             subprocess.Popen(["osascript", "-e", f'''
                 tell application "Ghostty"
