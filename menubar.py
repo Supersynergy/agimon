@@ -20,13 +20,40 @@ from AppKit import (
 )
 from Foundation import NSDictionary, NSMakeRect
 
-from collectors.processes import get_system_summary
-from collectors.costs import total_summary, load_costs_by_day
-from collectors.network import get_ssh_tunnels, get_external_connections, get_listening_services
-from collectors.sessions import load_recent_sessions, get_active_session_ids, Session
-from collectors.ghostty import get_all_terminals_flat, get_windows, focus_terminal
+from collectors.processes import get_system_summary as _raw_get_system_summary
+from collectors.costs import total_summary as _raw_total_summary, load_costs_by_day as _raw_load_costs_by_day
+from collectors.network import (
+    get_ssh_tunnels as _raw_get_ssh_tunnels,
+    get_external_connections as _raw_get_external_connections,
+    get_listening_services as _raw_get_listening_services,
+)
+from collectors.sessions import (
+    load_recent_sessions as _raw_load_recent_sessions,
+    get_active_session_ids as _raw_get_active_session_ids,
+    Session,
+)
+from collectors.ghostty import (
+    get_all_terminals_flat as _raw_get_all_terminals_flat,
+    get_windows as _raw_get_windows,
+    focus_terminal,
+)
 import collectors.telepathy as _tel
 import collectors.llm as _llm
+from collectors.cache import ttl_cache
+
+# TTL-cached wrappers — dedupe within a tick + short-term caching across ticks.
+# Menu rebuilds every 15s (_tick_count % 3 == 1 @ 5s timer); these TTLs are
+# tuned so cache lasts through ~2 rebuilds for stable data.
+get_system_summary        = ttl_cache(4.0)(_raw_get_system_summary)
+total_summary             = ttl_cache(30.0)(_raw_total_summary)
+load_costs_by_day         = ttl_cache(30.0)(_raw_load_costs_by_day)
+get_ssh_tunnels           = ttl_cache(20.0)(_raw_get_ssh_tunnels)
+get_external_connections  = ttl_cache(20.0)(_raw_get_external_connections)
+get_listening_services    = ttl_cache(60.0)(_raw_get_listening_services)
+load_recent_sessions      = ttl_cache(10.0)(_raw_load_recent_sessions)
+get_active_session_ids    = ttl_cache(4.0)(_raw_get_active_session_ids)
+get_windows               = ttl_cache(3.0)(_raw_get_windows)
+get_all_terminals_flat    = ttl_cache(3.0)(_raw_get_all_terminals_flat)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _ICON_PATH = "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/ToolbarAdvanced.icns"

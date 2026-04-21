@@ -14,7 +14,10 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from collectors.ghostty import get_windows, focus_terminal, _run_osascript
+from collectors.ghostty import get_windows as _raw_get_windows, focus_terminal, _run_osascript
+from collectors.cache import ttl_cache
+
+get_windows = ttl_cache(3.0)(_raw_get_windows)
 
 
 SYN_BIN = os.environ.get("SYN_BIN", "syn")
@@ -38,6 +41,7 @@ class TelepathyEvent:
     doc_id: str
 
 
+@ttl_cache(3.0)
 def fetch_events(limit: int = 30) -> list[TelepathyEvent]:
     """Run `syn search telepathy` and parse into structured events."""
     try:
