@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+# ╔═══════════════════════════════════════════════════════════════════╗
+# ║  agimon procs — smart process registry                            ║
+# ║  list / toggle / start / stop / restart / enable / disable        ║
+# ║  batch / classify / search / heal / summary                       ║
+# ╚═══════════════════════════════════════════════════════════════════╝
+set -euo pipefail
+
+AGIMON_DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHON="${AGIMON_DIR}/.venv/bin/python3"
+[ -x "$PYTHON" ] || PYTHON="python3"
+
+R='\033[0;31m' G='\033[0;32m' Y='\033[0;33m' B='\033[0;34m'
+M='\033[0;35m' C='\033[0;36m' W='\033[1;37m' D='\033[0;90m' N='\033[0m'
+
+_py() {
+  cd "$AGIMON_DIR" && "$PYTHON" -c "$@"
+}
+
+_help() {
+  printf '%b' "
+${M}agimon procs${N} — smart process registry
+
+  ${C}list${N} [--cat X] [--running] [--stopped]   tree view by category
+  ${C}toggle${N} <label>                            flip running ↔ stopped
+  ${C}start|stop|restart${N} <label>
+  ${C}enable|disable${N} <label>                   launchd autostart
+  ${C}batch${N} <action> <category|glob>            e.g. batch stop Autopilot
+  ${C}classify${N}                                  LLM-categorize unknowns
+  ${C}search${N} <query>                            fuzzy label/display match
+  ${C}heal${N}                                      restart stalled Daemon/DevService
+  ${C}summary${N}                                   MiniMax overview paragraph
+  ${C}details${N} <label>                           pid/cpu/mem/uptime/note
+  ${C}note${N} <label> <text>                       set annotation for label
+
+${D}Actions for batch: start stop restart enable disable toggle${N}
+"
+}
+
+cmd_list() {
+  local cat_filter="" show_running=1 show_stopped=1
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --cat) cat_filter="$2"; shift 2 ;;
+      --running) show_stopped=0; shift ;;
+      --stopped) show_running=0; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  _py "
+import sys, os
+sys.path.insert(0,'$AGIMON_DIR')
+from collectors.procs import scan, by_category, CATEGORY_ICONS
+
+entries = scan()
+cats = by_category(entries)
+
+cat_filter = '$cat_filter'
+show_running = $show_running
+show_stopped = $show_stopped
+
+ORDER = ['Autopilot','ZeroClaw','SuperJarvis','Daemon','DevService','Agent','System','Other']
+all_cats = ORDER + sorted(set(cats.keys()) - set(ORDER))
+
+total = 0
+for cat in all_cats:
+    elist = cats.get(cat, [])
+    if not elist: continue
+    if cat_filter and cat != cat_filter: continue
+    filtered = [e for e in elist if (e.running and show_running) or (not e.running and show_stopped)]
+    if not filtered: continue
+    icon = CATEGORY_ICONS.get(cat, '•')
+    running = sum(1 for e in filtered if e.running)
+    print(f'\033[1;37m{icon} {cat}\033[0m  \033[0;90m({running}/{len(filtered)})\033[0m')
+    for e in filtered:
+        dot = '\033[0;32m●\033[0m' if e.running else '\033[0;31m○\033[0m'
+        pid = f'  pid={e.pid}' if e.pid else ''
+        uptime = f'  up={e.uptime_sec}s' if e.uptime_sec else ''
+        cpu = f'  cpu={e.cpu:.1f}%' if e.cpu else ''
+        mem = f'  mem={e.mem_mb:.0f}MB' if e.mem_mb else ''
+        print(f'  {dot} \033[0;36m{e.display}\033[0m\033[0;90m{pid}{uptime}{cpu}{mem}\033[0m')
+        total += 1
+    print()
+print(f'\033[0;90mTotal: {total} entries\033[0m')
+"
+}
+
+cmd_toggle() {
+  local label="${1:?label required}"
+  _py "
+import sys; sys.path.insert(0,'$AGIMON_DIR')
+from collectors.procs import toggle
+print(toggle('$label'))
+"
+}
+
+cmd_start() {
+  local label="${1:?label required}"
+  _py "
+import sys; sys.path.insert(0,'$AGIMON_DIR')
+from collectors.procs import start
+print(start('$label'))
+"
+}
+
+cmd_stop() {
+  local label="${1:?label required}"
+  _py "
+import sys; sys.path.insert(0,'$AGIMON_DIR')
+from collectors.procs import stop
+print(stop('$label'))
+"
+}
+
+cmd_restart() {
+  local label="${1:?label required}"
+  _py "
+import sys, time; sys.path.insert(0,'$AGIMON_DIR')
+from collectors.procs import start, stop
+stop('$label'); time.sleep(1.0); print(start('$label'))
+"
+}
+
+cmd_enable() {
+  local label="${1:?label required}"
+  _py "
+import sys; sys.path.insert(0,'$AGIMON_DIR')
+from collectors.procs import enable
+print(enable('$label'))
+"
+}
+
+cmd_disable() {
+  local label="${1:?label required}"
+  _py "
+import sys; sys.path.insert(0,'$AGIMON_DIR')
+from collectors.procs import disable
+print(disable('$label'))
+"
+}
+
+cmd_batch() {
+  local action="${1:?action required}" target="${2:?category or glob required}"
+  _py "
+import sys; sys.path.insert(0,'$AGIMON_DIR')
+from collectors.procs import batch
+results = batch('$action', '$target')
+for label, res in results:
+    print(f'  \033[0;36m{label}\033[0m → {res}')
+if not results:
+    print('no entries matched')
+"
+}
+
+cmd_classify() {
+  _py "
+import sys; sys.path.insert(0,'$AGIMON_DIR')
+from collectors.procs import scan, classify_with_llm
+
+entries = scan()
+unknowns = [e for e in entries if e.category == 'Other']
+print(f'Classifying {len(unknowns)} unknown entries via LLM...')
+for e in unknowns:
+    cat = classify_with_llm(e.label)
+    print(f'  \033[0;36m{e.label}\033[0m → {cat}')
+print('Done (results cached 1h)')
+"
+}
+
+cmd_search() {
+  local query="${1:?search query required}"
+  _py "
+import sys; sys.path.insert(0,'$AGIMON_DIR')
+from collectors.procs import scan
+
+q = '$query'.lower()
+entries = scan()
+hits = [e for e in entries if q in e.label.lower() or q in e.display.lower() or q in e.category.lower()]
+if not hits:
+    print('no matches')
+else:
+    for e in hits:
+        dot = '\033[0;32m●\033[0m' if e.running else '\033[0;31m○\033[0m'
+        print(f'{dot} [{e.category}] \033[0;36m{e.display}\033[0m  \033[0;90m{e.label}\033[0m')
+"
+}
+
+cmd_heal() {
+  _py "
+import sys; sys.path.insert(0,'$AGIMON_DIR')
+from collectors.procs import heal
+results = heal()
+if not results:
+    print('\033[0;32m✓ All monitored services healthy\033[0m')
+else:
+    for label, res in results:
+        print(f'  \033[0;33m⚠ {label}\033[0m → {res}')
+"
+}
+
+cmd_summary() {
+  echo -e "${C}Generating MiniMax summary…${N}"
+  _py "
+import sys; sys.path.insert(0,'$AGIMON_DIR')
+from collectors.procs import summary
+print(summary())
+"
+}
+
+cmd_details() {
+  local label="${1:?label required}"
+  _py "
+import sys; sys.path.insert(0,'$AGIMON_DIR')
+from collectors.procs import scan, get_note
+
+entries = {e.label: e for e in scan()}
+e = entries.get('$label')
+if not e:
+    print('not found: $label')
+    sys.exit(1)
+note = get_note(e.label)
+print(f'Label:    {e.label}')
+print(f'Display:  {e.display}')
+print(f'Category: {e.category}')
+print(f'Kind:     {e.kind}')
+print(f'Running:  {e.running}')
+print(f'PID:      {e.pid}')
+print(f'Uptime:   {e.uptime_sec}s')
+print(f'CPU:      {e.cpu}%')
+print(f'Mem:      {e.mem_mb} MB')
+print(f'Plist:    {e.plist}')
+print(f'Port:     {e.port}')
+print(f'Note:     {note or \"(none)\"}')
+"
+}
+
+cmd_note() {
+  local label="${1:?label required}"
+  shift
+  local text="$*"
+  _py "
+import sys; sys.path.insert(0,'$AGIMON_DIR')
+from collectors.procs import set_note
+set_note('$label', '$text')
+print('note saved')
+"
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+
+case "${1:-list}" in
+  list|ls)      shift; cmd_list "$@" ;;
+  toggle)       shift; cmd_toggle "$@" ;;
+  start)        shift; cmd_start "$@" ;;
+  stop)         shift; cmd_stop "$@" ;;
+  restart)      shift; cmd_restart "$@" ;;
+  enable)       shift; cmd_enable "$@" ;;
+  disable)      shift; cmd_disable "$@" ;;
+  batch)        shift; cmd_batch "$@" ;;
+  classify)     cmd_classify ;;
+  search)       shift; cmd_search "$@" ;;
+  heal)         cmd_heal ;;
+  summary)      cmd_summary ;;
+  details)      shift; cmd_details "$@" ;;
+  note)         shift; cmd_note "$@" ;;
+  help|-h|--help) _help ;;
+  *) echo "unknown: $1"; _help; exit 2 ;;
+esac

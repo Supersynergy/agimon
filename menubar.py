@@ -1127,6 +1127,55 @@ class ClaudeMenubar(rumps.App):
         ]
         sec = rumps.MenuItem("⚙ Einstellungen", callback=_noop)
 
+        # ── 📦 Prozesse submenu ────────────────────────────────────
+        procs_bin = os.path.join(SCRIPT_DIR, "procs")
+
+        def _procs_cmd(args: list):
+            def cb(_):
+                try:
+                    r = subprocess.run(
+                        [procs_bin] + args,
+                        capture_output=True, text=True, timeout=30,
+                        cwd=SCRIPT_DIR,
+                    )
+                    import re as _re
+                    out = _re.sub(r'\x1b\[[0-9;]*m', '', (r.stdout + r.stderr).strip())
+                    _result_alert("📦 Prozesse", out or f"(no output) rc={r.returncode}", copy_button=False)
+                except Exception as e:
+                    _simple_alert("❌ procs", str(e))
+            return cb
+
+        pm = rumps.MenuItem("📦 Prozesse", callback=_noop)
+        pm.add(rumps.MenuItem("📋 Übersicht alle Kategorien", callback=_procs_cmd(["list"])))
+        pm.add(None)
+
+        # Per-category submenus (static definition — counts updated at menu rebuild time)
+        _CAT_CONFIG = [
+            ("Autopilot",   "🤖 Autopilot"),
+            ("ZeroClaw",    "🕷 ZeroClaw"),
+            ("SuperJarvis", "🧠 SuperJarvis"),
+            ("Daemon",      "📡 Daemons"),
+            ("DevService",  "🛠 DevService"),
+            ("Agent",       "💬 Agents"),
+            ("System",      "🪪 System"),
+            ("Other",       "❓ Andere"),
+        ]
+        for cat_key, cat_label in _CAT_CONFIG:
+            csub = rumps.MenuItem(cat_label, callback=_noop)
+            csub.add(rumps.MenuItem("📋 Alle anzeigen",    callback=_procs_cmd(["list", "--cat", cat_key])))
+            csub.add(None)
+            csub.add(rumps.MenuItem("⚡ Alle starten",      callback=_procs_cmd(["batch", "start",   cat_key])))
+            csub.add(rumps.MenuItem("⏹ Alle stoppen",       callback=_procs_cmd(["batch", "stop",    cat_key])))
+            csub.add(rumps.MenuItem("🔄 Alle neu starten",  callback=_procs_cmd(["batch", "restart", cat_key])))
+            pm.add(csub)
+
+        pm.add(None)
+        pm.add(rumps.MenuItem("🏥 Heal (stalled services)",  callback=_procs_cmd(["heal"])))
+        pm.add(rumps.MenuItem("📊 MiniMax Summary",          callback=_procs_cmd(["summary"])))
+        pm.add(rumps.MenuItem("🔍 LLM-Klassifizieren",      callback=_procs_cmd(["classify"])))
+        sec.add(pm)
+        sec.add(None)
+
         # Daemons submenu
         dm = rumps.MenuItem("🔌 Daemons", callback=_noop)
         daemons_bin = os.path.join(SCRIPT_DIR, "daemons")
