@@ -341,7 +341,7 @@ EOF
 }
 
 _help() {
-  cat <<EOF
+  printf '%b' "
 ${M}agimon daemons${N} — bg process control
 
   ${C}status${N}                       Übersicht aller daemons
@@ -355,7 +355,7 @@ ${M}agimon daemons${N} — bg process control
   ${C}all-start|all-stop${N}           alle gleichzeitig
 
 ${D}daemons:${N}  synapse (brain)  ·  telepathy  ·  agimon (menubar)
-EOF
+"
 }
 
 cmd_all_start() {
