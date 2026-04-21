@@ -1,9 +1,10 @@
-"""AGIMON — macOS Menubar. Polished power-user UX."""
+"""AGIMON — macOS Menubar. Power-user AI-native UX."""
 from __future__ import annotations
 import json
 import os
 import subprocess
 import sys
+import threading
 import urllib.request as _ur
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from collectors.network import get_ssh_tunnels, get_external_connections, get_li
 from collectors.sessions import load_recent_sessions, get_active_session_ids, Session
 from collectors.ghostty import get_all_terminals_flat, get_windows, focus_terminal
 import collectors.telepathy as _tel
+import collectors.llm as _llm
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _ICON_PATH = "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/ToolbarAdvanced.icns"
@@ -37,6 +39,10 @@ PROJECTS = [
     ("🔍 Omni Scraper",     "/Users/master/omni-scraper",                             None),
     ("⚡ AGIMON",            SCRIPT_DIR,                                               None),
     ("📋 Plane.so",          "/Users/master/plane-docker",                             "http://localhost:8090"),
+]
+
+QUICK_SKILLS = [
+    "/loop", "/review", "/security-review", "/claude-api",
 ]
 
 QUICK_LINKS = [
@@ -74,21 +80,18 @@ def _trunc(s: str, n: int) -> str:
 
 
 def _proj_name(raw: str) -> str:
-    """Decode Claude Code's dash-encoded project key → human name.
-    '-Users-master-projects-agimon' → 'agimon'; '-Users-master' → 'home'."""
     raw = (raw or "").rstrip("/")
     if not raw:
         return "?"
     if raw.startswith("-"):
         parts = [p for p in raw.lstrip("-").split("-") if p]
         if len(parts) >= 2 and parts[0] == "Users":
-            parts = parts[2:]  # drop "Users", username
+            parts = parts[2:]
         return parts[-1] if parts else "home"
     return os.path.basename(raw)
 
 
 def _session_label(s: Session, active_ids: set) -> str:
-    """Human label: <project> · <prompt-snippet> · N tools"""
     proj = _proj_name(s.project)
     msg  = _trunc(s.first_user_message or "…", 32)
     tool_count = sum(s.tools_used.values())
@@ -98,11 +101,9 @@ def _session_label(s: Session, active_ids: set) -> str:
 
 
 def _window_label(t: dict) -> str:
-    """Human label: <cwd-basename> · <title-hint>"""
     cwd   = t.get("working_dir", "")
     base  = os.path.basename(cwd.rstrip("/")) if cwd else "?"
     title = t.get("terminal_title", "")
-    # strip duplicate basename from title
     if title.startswith(base):
         title = title[len(base):].lstrip(" -–·|")
     suffix = f" · {_trunc(title, 20)}" if title else ""
@@ -138,7 +139,7 @@ def _styled_alert(title: str, lines: list[tuple[str, object]],
             [mono, color], [NSFontAttributeName, NSForegroundColorAttributeName])
         seg = NSAttributedString.alloc().initWithString_attributes_(line + "\n", attrs)
         text.appendAttributedString_(seg)
-    tv = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 450, 220))
+    tv = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 450, 280))
     tv.setAttributedStringValue_(text)
     tv.setEditable_(False)
     tv.setBezeled_(False)
@@ -146,6 +147,26 @@ def _styled_alert(title: str, lines: list[tuple[str, object]],
     tv.setSelectable_(True)
     alert.setAccessoryView_(tv)
     return alert.runModal()
+
+
+def _simple_alert(title: str, message: str) -> None:
+    _styled_alert(title, [(message, NSColor.labelColor())])
+
+
+def _input_dialog(title: str, placeholder: str = "") -> str | None:
+    from AppKit import NSPanel, NSTextField as NSTFld, NSApplication
+    alert = NSAlert.alloc().init()
+    alert.setMessageText_(title)
+    alert.addButtonWithTitle_("Senden")
+    alert.addButtonWithTitle_("Abbrechen")
+    field = NSTFld.alloc().initWithFrame_(NSMakeRect(0, 0, 380, 24))
+    field.setPlaceholderString_(placeholder)
+    alert.setAccessoryView_(field)
+    alert.window().setInitialFirstResponder_(field)
+    r = alert.runModal()
+    if r == NSAlertFirstButtonReturn:
+        return field.stringValue()
+    return None
 
 
 # ── Callback factories ──────────────────────────────────────────────
@@ -282,46 +303,272 @@ def _launch_claude_in(path: str):
         '''])
     return cb
 
+def _launch_ggcoder_in(path: str):
+    def cb(_):
+        subprocess.Popen(["osascript", "-e", f'''
+            tell application "Ghostty"
+                activate
+                set cfg to new surface configuration
+                set initial working directory of cfg to "{path}"
+                set command of cfg to "ggcoder"
+                new window with configuration cfg
+            end tell
+        '''])
+    return cb
+
 def _telepathy_jump(sid8: str):
     def cb(_):
         result = _tel.jump(sid8)
         rumps.notification("AGIMON Telepathy", "Jump", result[:80])
     return cb
 
+def _run_skill_in(path: str, skill: str):
+    def cb(_):
+        subprocess.Popen(["osascript", "-e", f'''
+            tell application "Ghostty"
+                activate
+                set cfg to new surface configuration
+                set initial working directory of cfg to "{path}"
+                set command of cfg to "/Users/master/.local/bin/claude --dangerously-skip-permissions {skill}"
+                new window with configuration cfg
+            end tell
+        '''])
+    return cb
+
+def _run_in_ghostty_cmd(cmd: str, cwd: str = "/Users/master"):
+    def cb(_):
+        subprocess.Popen(["osascript", "-e", f'''
+            tell application "Ghostty"
+                activate
+                set cfg to new surface configuration
+                set initial working directory of cfg to "{cwd}"
+                set command of cfg to "{cmd}"
+                new window with configuration cfg
+            end tell
+        '''])
+    return cb
+
+
+# ── Async LLM helpers (always non-blocking) ─────────────────────────
+
+def _async_minimax_alert(prompt: str, title: str):
+    """Fire MiniMax call, show result as native alert when done."""
+    def cb(_):
+        def _show(result: str):
+            if result:
+                _simple_alert(title, result)
+            else:
+                _simple_alert(title, "Kein Ergebnis (API-Key fehlt?)")
+        _llm.run_async(_llm.minimax_chat, _show, prompt,
+                       "Du bist ein hilfreicher Assistent. Antworte auf Deutsch, prägnant.")
+        rumps.notification("AGIMON", title, "Anfrage gesendet…")
+    return cb
+
+def _async_ollama_alert(prompt: str, title: str, model: str = "gemma3:270m"):
+    def cb(_):
+        def _show(result: str):
+            if result:
+                _simple_alert(title, result)
+            else:
+                _simple_alert(title, "Kein Ergebnis (Ollama läuft?)")
+        _llm.run_async(_llm.ollama_quick, _show, prompt, model)
+        rumps.notification("AGIMON", title, "Lokales LLM…")
+    return cb
+
+def _minimax_prompt_dialog(title: str = "⚡ Prompt → MiniMax"):
+    def cb(_):
+        text = _input_dialog(title, "Deine Frage…")
+        if text and text.strip():
+            _async_minimax_alert(text.strip(), title)(None)
+    return cb
+
+def _ollama_prompt_dialog(model: str = "gemma3:270m"):
+    def cb(_):
+        text = _input_dialog(f"🧠 Prompt → {model}", "Deine Frage…")
+        if text and text.strip():
+            _async_ollama_alert(text.strip(), f"🧠 {model}", model)(None)
+    return cb
+
+def _uda_ask_dialog():
+    def cb(_):
+        text = _input_dialog("🔎 uda ask …", "Suchanfrage…")
+        if text and text.strip():
+            subprocess.Popen(["osascript", "-e", f'''
+                tell application "Ghostty"
+                    activate
+                    set cfg to new surface configuration
+                    set command of cfg to "uda ask \\"{text.strip()}\\""
+                    new window with configuration cfg
+                end tell
+            '''])
+    return cb
+
+def _syn_search_dialog():
+    def cb(_):
+        text = _input_dialog("📡 syn search …", "Suchbegriff…")
+        if text and text.strip():
+            subprocess.Popen(["osascript", "-e", f'''
+                tell application "Ghostty"
+                    activate
+                    set cfg to new surface configuration
+                    set command of cfg to "syn search \\"{text.strip()}\\""
+                    new window with configuration cfg
+                end tell
+            '''])
+    return cb
+
+def _hyperfetch_dialog():
+    def cb(_):
+        text = _input_dialog("🌐 hyperfetch URL", "https://…")
+        if text and text.strip():
+            subprocess.Popen(["osascript", "-e", f'''
+                tell application "Ghostty"
+                    activate
+                    set cfg to new surface configuration
+                    set command of cfg to "hyperfetch \\"{text.strip()}\\" --stage camoufox"
+                    new window with configuration cfg
+                end tell
+            '''])
+    return cb
+
 
 # ── Reusable submenu builders ───────────────────────────────────────
 
 def _session_actions_submenu(item: rumps.MenuItem, s: Session) -> None:
-    """Attach standard session actions to item (mutates in place)."""
+    """Attach expanded session actions to item."""
+    # Focus window via telepathy if possible
+    sid8 = s.session_id[:8] if s.session_id else ""
+    if sid8:
+        item.add(rumps.MenuItem("🪟 Fokus Fenster",
+                                callback=_telepathy_jump(sid8)))
     item.add(rumps.MenuItem("▶️ Resume in neuem Fenster",
                             callback=_resume_session(s.session_id, s.project)))
-    item.add(rumps.MenuItem("📋 Session-ID kopieren", callback=_copy(s.session_id)))
-    item.add(rumps.MenuItem("📋 Resume-Command kopieren",
-                            callback=_copy(f"claude --resume {s.session_id} --dangerously-skip-permissions")))
+    # Transcript path
+    proj_key = s.project.replace("/", "-").lstrip("-") if s.project else ""
+    jsonl_path = str(Path.home() / ".claude/projects" / proj_key / f"{s.session_id}.jsonl")
+    item.add(rumps.MenuItem("📋 Session-Pfad kopieren",
+                            callback=_copy(jsonl_path)))
+    item.add(rumps.MenuItem("📝 Transcript öffnen", callback=_open_transcript(jsonl_path)))
+
+    # MiniMax summarize
+    first_msg = _trunc(s.first_user_message or "", 300)
+    tools_str = ", ".join(f"{t}({c})" for t, c in
+                          sorted(s.tools_used.items(), key=lambda x: -x[1])[:5])
+    summary_prompt = (f"Session-Zusammenfassung:\nErste Nachricht: {first_msg}\n"
+                      f"Tools: {tools_str}\nGib eine kurze prägnante Zusammenfassung (3 Sätze).")
+    item.add(rumps.MenuItem("🧠 Zusammenfassen (MiniMax)",
+                            callback=_async_minimax_alert(summary_prompt, "🧠 Session-Zusammenfassung")))
+    item.add(rumps.MenuItem("⚡ Auto-Tag (Ollama)",
+                            callback=_async_ollama_alert(
+                                f"Klassifiziere diese Claude-Session in 3 Tags (kommagetrennt): {first_msg}",
+                                "⚡ Auto-Tag")))
+
+    if first_msg:
+        item.add(rumps.MenuItem("🔎 In Synapse suchen",
+                                callback=_run_in_ghostty_cmd(
+                                    f"syn search \"{first_msg[:40]}\"", s.project or "/Users/master")))
+    if sid8:
+        item.add(rumps.MenuItem("📡 Telepathy dieser Session",
+                                callback=_run_in_ghostty_cmd(
+                                    f"syn search telepathy {sid8}", s.project or "/Users/master")))
+
     if s.tools_used:
         tools = ", ".join(f"{t}({c})" for t, c in
                           sorted(s.tools_used.items(), key=lambda x: -x[1])[:5])
-        item.add(rumps.MenuItem(f"Tools: {tools}", callback=_noop))
+        item.add(rumps.MenuItem(f"🔧 Tools: {tools}", callback=_noop))
+
+
+def _open_transcript(path: str):
+    def cb(_):
+        subprocess.Popen(["osascript", "-e", f'''
+            tell application "Ghostty"
+                activate
+                set cfg to new surface configuration
+                set command of cfg to "bat \\"{path}\\""
+                new window with configuration cfg
+            end tell
+        '''])
+    return cb
 
 
 def _project_actions_submenu(item: rumps.MenuItem, path: str, url: str | None = None) -> None:
-    """Attach standard project actions to item (mutates in place)."""
-    item.add(rumps.MenuItem("💻 Claude Code starten",  callback=_launch_claude_in(path)))
-    item.add(rumps.MenuItem("📝 In Windsurf öffnen",   callback=_open_in_ide(path)))
+    item.add(rumps.MenuItem("💻 Claude starten",      callback=_launch_claude_in(path)))
+    item.add(rumps.MenuItem("⚡ ggcoder starten",      callback=_launch_ggcoder_in(path)))
+    item.add(rumps.MenuItem("📝 In Windsurf öffnen",  callback=_open_in_ide(path)))
     item.add(rumps.MenuItem("⌨️ Terminal hier",         callback=_open_in_ghostty(path)))
-    item.add(rumps.MenuItem("📂 Im Finder",             callback=_open_in_finder(path)))
+    item.add(rumps.MenuItem("📂 Im Finder",            callback=_open_in_finder(path)))
     if url:
-        item.add(rumps.MenuItem("🌐 Web UI öffnen",    callback=_open_url(url)))
+        item.add(rumps.MenuItem("🌐 Web UI öffnen",   callback=_open_url(url)))
+    proj_base = os.path.basename(path.rstrip("/"))
+    item.add(rumps.MenuItem("🔎 uda ask (letzte 7d)",
+                            callback=_run_in_ghostty_cmd(
+                                f"uda ask \"what changed in {proj_base} last 7d\"")))
+    # Stats
+    item.add(rumps.MenuItem("📊 Stats (tokei + git)",
+                            callback=_proj_stats(path)))
+    # Skills submenu
+    skills_sub = rumps.MenuItem("🚀 Skill ausführen", callback=_noop)
+    for skill in QUICK_SKILLS:
+        skills_sub.add(rumps.MenuItem(skill, callback=_run_skill_in(path, skill)))
+    item.add(skills_sub)
+
+
+def _proj_stats(path: str):
+    def cb(_):
+        try:
+            tok_out = subprocess.run(["tokei", path], capture_output=True, text=True, timeout=10).stdout
+            git_out = subprocess.run(["git", "-C", path, "status", "--short"],
+                                     capture_output=True, text=True, timeout=5).stdout
+            lines = []
+            for l in tok_out.split("\n")[:12]:
+                lines.append((l, NSColor.labelColor()))
+            lines.append(("── git status ──────────────────────────", NSColor.systemOrangeColor()))
+            for l in git_out.split("\n")[:10]:
+                lines.append((l, NSColor.systemGreenColor()))
+            _styled_alert(f"📊 {os.path.basename(path)}", lines)
+        except Exception as e:
+            _simple_alert("❌ Fehler", str(e))
+    return cb
 
 
 def _terminal_actions_submenu(item: rumps.MenuItem, t: dict) -> None:
     cwd = t.get("working_dir", "")
-    if not cwd:
-        return
-    item.add(rumps.MenuItem("📂 Im Finder",          callback=_open_in_finder(cwd)))
-    item.add(rumps.MenuItem("📝 In Windsurf",         callback=_open_in_ide(cwd)))
-    item.add(rumps.MenuItem("💻 Claude Code starten", callback=_launch_claude_in(cwd)))
-    item.add(rumps.MenuItem("📋 Pfad kopieren",       callback=_copy(cwd)))
+    wi  = t.get("window_index", 0)
+    ti  = t.get("tab_index", 1)
+
+    item.add(rumps.MenuItem("🪟 Fokus",              callback=_focus_ghost(wi, ti)))
+    if cwd:
+        item.add(rumps.MenuItem("📋 CWD kopieren",   callback=_copy(cwd)))
+        item.add(rumps.MenuItem("📂 Im Finder",       callback=_open_in_finder(cwd)))
+        item.add(rumps.MenuItem("📝 In Windsurf",     callback=_open_in_ide(cwd)))
+        item.add(rumps.MenuItem("💻 Claude Code hier", callback=_launch_claude_in(cwd)))
+        item.add(rumps.MenuItem("🔍 Was läuft? (MiniMax)", callback=_terminal_explain(t)))
+
+        # Telepathy: other sessions in same cwd
+        cwd_base = os.path.basename(cwd.rstrip("/"))
+        item.add(rumps.MenuItem("📡 Telepathy: gleicher CWD",
+                                callback=_run_in_ghostty_cmd(
+                                    f"syn search telepathy {cwd_base}", cwd)))
+
+        # Skills submenu
+        skills_sub = rumps.MenuItem("🚀 Skill ausführen", callback=_noop)
+        for skill in QUICK_SKILLS:
+            skills_sub.add(rumps.MenuItem(skill, callback=_run_skill_in(cwd, skill)))
+        item.add(skills_sub)
+
+
+def _terminal_explain(t: dict):
+    """Read terminal content, ask MiniMax what it does."""
+    def cb(_):
+        try:
+            from collectors.ghostty import read_terminal_content
+            content = read_terminal_content(t.get("window_index", 0), t.get("tab_index", 1))
+        except Exception:
+            content = t.get("terminal_title", "unbekanntes Terminal")
+        content_trunc = _trunc(content or "leer", 600)
+        prompt = f"Was macht dieses Terminal? Erkläre kurz (2 Sätze):\n{content_trunc}"
+        _async_minimax_alert(prompt, "🔍 Terminal-Erklärung")(None)
+    return cb
 
 
 # ── Main App ────────────────────────────────────────────────────────
@@ -337,33 +584,53 @@ class ClaudeMenubar(rumps.App):
     def _tick(self, _):
         self._tick_count += 1
         try:
-            si = get_system_summary()
+            si  = get_system_summary()
             act = si.get("active", 0)
             cpu = si.get("total_cpu", 0)
             self._cpu_history.append(cpu)
             self._cpu_history = self._cpu_history[-8:]
 
-            # Title: concise live stats
+            # Title: compact live stats (no costs)
             try:
-                sm = total_summary(1)
-                cost_today = sm.get("total_cost", 0)
-                cost_str = f"${cost_today:.2f}"
+                tel_events = _tel.fetch_events(20)
+                tel_count = len(tel_events)
             except Exception:
-                cost_str = "$?.??"
-            dot = "●" if act > 0 else "○"
-            self.title = f"⚡ {act} · {cost_str}" if act > 0 else f"{dot} {cost_str}"
+                tel_count = 0
+
+            try:
+                terms = get_all_terminals_flat()
+                term_count = len(terms)
+            except Exception:
+                term_count = 0
+
+            # Watchdog issues
+            watchdog_issues = 0
+            try:
+                from collectors.watchdog import get_health_issues
+                watchdog_issues = len(get_health_issues())
+            except Exception:
+                pass
+
+            if act > 0:
+                self.title = f"⚡{act} 📡{tel_count} 💻{term_count}"
+            else:
+                self.title = f"○ 📡{tel_count} 💻{term_count}"
+            if watchdog_issues > 0:
+                self.title += f" ⚠{watchdog_issues}"
 
             if self._tick_count % 3 == 1:
                 data = {
-                    "si":        si,
-                    "sessions":  load_recent_sessions(30),
+                    "si":         si,
+                    "sessions":   load_recent_sessions(30),
                     "active_ids": get_active_session_ids(),
-                    "terms":     get_all_terminals_flat(),
-                    "tunnels":   get_ssh_tunnels(),
-                    "external":  get_external_connections(),
-                    "listeners": get_listening_services(),
-                    "costs":     total_summary(14),
-                    "days":      load_costs_by_day(7),
+                    "terms":      terms,
+                    "tunnels":    get_ssh_tunnels(),
+                    "external":   get_external_connections(),
+                    "listeners":  get_listening_services(),
+                    "costs":      total_summary(14),
+                    "days":       load_costs_by_day(7),
+                    "tel_events": tel_events,
+                    "tel_count":  tel_count,
                 }
                 self._render_menu(data)
         except Exception:
@@ -380,13 +647,18 @@ class ClaudeMenubar(rumps.App):
     def _render_menu(self, data: dict) -> None:
         self.menu.clear()
 
-        si       = data.get("si", {})
-        act      = si.get("active", 0)
-        sessions = data.get("sessions", [])
+        si         = data.get("si", {})
+        sessions   = data.get("sessions", [])
         active_ids = data.get("active_ids", set())
+        tel_events = data.get("tel_events", [])
+        tel_count  = data.get("tel_count", 0)
+
+        # ── 🚀 Aktionen (top-level quick actions) ───────────────────
+        self._add_actions_section()
+        self.menu.add(None)
 
         # ── 📡 Telepathy ────────────────────────────────────────────
-        self._add_telepathy_section()
+        self._add_telepathy_section(tel_events)
         self.menu.add(None)
 
         # ── 🟢 Aktive Sessions ──────────────────────────────────────
@@ -420,13 +692,39 @@ class ClaudeMenubar(rumps.App):
 
     # ── Section builders ────────────────────────────────────────────
 
-    def _add_telepathy_section(self) -> None:
-        try:
-            events = _tel.fetch_events(8)
-        except Exception:
-            events = []
+    def _add_actions_section(self) -> None:
+        sec = rumps.MenuItem("🚀 Aktionen", callback=_noop)
+        sec.add(rumps.MenuItem("⚡ Prompt → MiniMax",        callback=_minimax_prompt_dialog()))
+        sec.add(rumps.MenuItem("🧠 Prompt → gemma3:270m",    callback=_ollama_prompt_dialog("gemma3:270m")))
+        sec.add(rumps.MenuItem("🧠 Prompt → smollm2:135m",   callback=_ollama_prompt_dialog("smollm2:135m")))
+        sec.add(None)
+        sec.add(rumps.MenuItem("🔎 uda ask …",               callback=_uda_ask_dialog()))
+        sec.add(rumps.MenuItem("📡 syn search …",            callback=_syn_search_dialog()))
+        sec.add(rumps.MenuItem("🌐 hyperfetch URL",           callback=_hyperfetch_dialog()))
+        sec.add(None)
+        sec.add(rumps.MenuItem("📥 miniflux-digest heute",
+                               callback=_run_in_ghostty_cmd("miniflux-digest --since 24h")))
+        sec.add(rumps.MenuItem("📅 schedule list",
+                               callback=_run_in_ghostty_cmd("schedule list")))
+        sec.add(None)
+        sec.add(rumps.MenuItem("🦙 Ollama Modelle …",        callback=self._show_ollama_models))
+        self.menu.add(sec)
 
-        # Precompute live cwds
+    def _show_ollama_models(self, _):
+        try:
+            r = _ur.urlopen("http://localhost:11434/api/tags", timeout=3)
+            models = json.loads(r.read()).get("models", [])
+            lines = [("── Geladene Modelle ─────────────────────", NSColor.systemOrangeColor())]
+            for m in models:
+                name = m.get("name", "?")
+                sz   = m.get("size", 0) // (1024**2)
+                lines.append((f"  {name}  ({sz}MB)", NSColor.labelColor()))
+            _styled_alert("🦙 Ollama Modelle", lines)
+        except Exception as e:
+            _simple_alert("🦙 Ollama", f"Nicht erreichbar: {e}")
+
+    def _add_telepathy_section(self, events: list) -> None:
+        # Categorize: live (has Ghostty window) vs idle
         live_cwds: set[str] = set()
         try:
             for win in get_windows():
@@ -438,21 +736,49 @@ class ClaudeMenubar(rumps.App):
         except Exception:
             pass
 
-        count_str = f" ({len(events)})" if events else ""
-        sec = rumps.MenuItem(f"📡 Telepathy{count_str}", callback=_noop)
+        live_evs  = [e for e in events if os.path.basename(e.cwd.rstrip("/")) in live_cwds]
+        idle_evs  = [e for e in events if os.path.basename(e.cwd.rstrip("/")) not in live_cwds]
+
+        header = f"📡 Telepathy ({len(live_evs)} live, {len(events)} total)"
+        sec = rumps.MenuItem(header, callback=_noop)
+
+        def _add_tel_item(parent, ev):
+            cwd_base = os.path.basename(ev.cwd.rstrip("/")) or ev.cwd
+            is_live  = cwd_base in live_cwds
+            dot = "●" if is_live else "○"
+            kind_icon = {"prompt": "💬", "reply": "🤖", "tools": "🔧"}.get(ev.kind, "•")
+            body = _trunc(ev.body, 38)
+            label = f"{dot} {cwd_base} · {kind_icon} {body}"
+            it = rumps.MenuItem(label, callback=_telepathy_jump(ev.sid8))
+            it.add(rumps.MenuItem("⚡ Jump",            callback=_telepathy_jump(ev.sid8)))
+            it.add(rumps.MenuItem("📋 Session-ID kopieren", callback=_copy(ev.sid8)))
+            it.add(rumps.MenuItem("🧠 Was macht Session? (MiniMax)",
+                                  callback=_async_minimax_alert(
+                                      f"Was macht diese Claude-Session?\nCWD: {ev.cwd}\n"
+                                      f"Letzte Aktivität: {_trunc(ev.body, 200)}",
+                                      "🧠 Session-Status")))
+            parent.add(it)
+
+        if live_evs:
+            sec.add(rumps.MenuItem("─ Live ─────────────────────", callback=_noop))
+            for ev in live_evs[:5]:
+                _add_tel_item(sec, ev)
+
+        if idle_evs:
+            sec.add(rumps.MenuItem("─ Idle ─────────────────────", callback=_noop))
+            for ev in idle_evs[:5]:
+                _add_tel_item(sec, ev)
 
         if not events:
-            sec.add(rumps.MenuItem("  Kein Aktivität — Synapse läuft?", callback=_noop))
+            sec.add(rumps.MenuItem("  Keine Aktivität — Synapse läuft?", callback=_noop))
         else:
-            for ev in events:
-                cwd_base = os.path.basename(ev.cwd.rstrip("/")) or ev.cwd
-                dot = "●" if cwd_base in live_cwds else "○"
-                kind_icon = {"prompt": "💬", "reply": "🤖", "tools": "🔧"}.get(ev.kind, "•")
-                body = _trunc(ev.body, 42)
-                label = f"{dot} {cwd_base} · {kind_icon} {body}"
-                it = rumps.MenuItem(label, callback=_telepathy_jump(ev.sid8))
-                sec.add(it)
             sec.add(None)
+            # MiniMax summary of full feed
+            all_bodies = "\n".join(f"[{e.sid8}][{e.kind}] {_trunc(e.body, 60)}" for e in events[:12])
+            sec.add(rumps.MenuItem("🧠 Zusammenfassung (MiniMax)",
+                                   callback=_async_minimax_alert(
+                                       f"Fasse diese Telepathy-Ereignisse zusammen (1 Absatz):\n{all_bodies}",
+                                       "🧠 Telepathy Feed")))
             def _open_feed(_):
                 subprocess.Popen(["osascript", "-e", f'''
                     tell application "Ghostty"
@@ -468,10 +794,9 @@ class ClaudeMenubar(rumps.App):
         self.menu.add(sec)
 
     def _add_sessions_section(self, sessions: list, active_ids: set) -> None:
-        active_s  = [s for s in sessions if s.session_id in active_ids]
-        recent_s  = [s for s in sessions if s.session_id not in active_ids]
+        active_s = [s for s in sessions if s.session_id in active_ids]
+        recent_s = [s for s in sessions if s.session_id not in active_ids]
 
-        # Disambiguate duplicate project names
         proj_counts: dict[str, int] = {}
         for s in active_s:
             k = _proj_name(s.project)
@@ -492,14 +817,14 @@ class ClaudeMenubar(rumps.App):
             it = rumps.MenuItem(label, callback=_resume_session(s.session_id, s.project))
             _session_actions_submenu(it, s)
             it.add(None)
-            it.add(rumps.MenuItem(f"❌ Prozess beenden", callback=_noop))  # placeholder
+            it.add(rumps.MenuItem("💀 Prozess beenden",
+                                  callback=_kill_session_by_id(s.session_id)))
             sec.add(it)
 
         if not active_s:
             sec.add(rumps.MenuItem("  Keine aktiven Sessions", callback=_noop))
         self.menu.add(sec)
 
-        # Recent sessions (collapsed submenu)
         rec = rumps.MenuItem(f"📜 Letzte Sessions ({len(recent_s)})", callback=_noop)
         for s in recent_s[:15]:
             proj = _proj_name(s.project)
@@ -527,7 +852,6 @@ class ClaudeMenubar(rumps.App):
     def _add_costs_section(self, sm: dict, days: list) -> None:
         total = sm.get("total_cost", 0)
         toks  = sm.get("total_tokens", 0)
-        sess  = sm.get("total_sessions", 0)
         sec = rumps.MenuItem(
             f"💰 Kosten  ${total:,.2f} / 14d  ·  {fmt_tok(toks)} tok",
             callback=_noop,
@@ -590,7 +914,6 @@ class ClaudeMenubar(rumps.App):
             callback=_noop,
         )
 
-        # Ollama
         ol_menu = rumps.MenuItem(f"🦙 Ollama {ol_dot}", callback=_noop)
         if ol_ok:
             try:
@@ -599,7 +922,11 @@ class ClaudeMenubar(rumps.App):
                 for m in models[:10]:
                     name = m.get("name", "?")
                     sz   = m.get("size", 0) // (1024**3)
-                    ol_menu.add(rumps.MenuItem(f"  {name}  ({sz}GB)", callback=_noop))
+                    mi = rumps.MenuItem(f"  {name}  ({sz}GB)", callback=_noop)
+                    # One-click run quick test
+                    mi.add(rumps.MenuItem("🧠 Testen",
+                                         callback=_async_ollama_alert("Antworte mit 'OK'", f"Test {name}", name)))
+                    ol_menu.add(mi)
             except Exception:
                 pass
         else:
@@ -608,7 +935,6 @@ class ClaudeMenubar(rumps.App):
             ol_menu.add(rumps.MenuItem("▶ Ollama starten", callback=_start_ollama))
         sec.add(ol_menu)
 
-        # Qdrant
         qd_menu = rumps.MenuItem(f"🗄 Qdrant {qd_dot}", callback=_noop)
         if qd_ok:
             try:
@@ -627,6 +953,17 @@ class ClaudeMenubar(rumps.App):
                 rumps.notification("Qdrant", "Docker Container", "wird gestartet…")
             qd_menu.add(rumps.MenuItem("▶ Qdrant (Docker) starten", callback=_start_qdrant))
         sec.add(qd_menu)
+
+        # MiniMax status
+        mm_key = _llm.minimax_key()
+        mm_dot = "🟢" if mm_key else "🔴"
+        mm_menu = rumps.MenuItem(f"🤖 MiniMax M2.7 {mm_dot}", callback=_noop)
+        if mm_key:
+            mm_menu.add(rumps.MenuItem("⚡ Test-Prompt senden",
+                                       callback=_async_minimax_alert("Antworte mit 'OK'", "MiniMax Test")))
+        else:
+            mm_menu.add(rumps.MenuItem("  Key in ~/.gg/auth.json eintragen", callback=_noop))
+        sec.add(mm_menu)
 
         self.menu.add(sec)
 
@@ -667,6 +1004,13 @@ class ClaudeMenubar(rumps.App):
         if r == 1:
             subprocess.run(["pkill", "-f", "claude.*--dangerously"], check=False)
             rumps.notification("Claude Monitor", "", "Alle gestoppt")
+
+
+def _kill_session_by_id(session_id: str):
+    def cb(_):
+        subprocess.run(["pkill", "-f", f"--resume {session_id}"], check=False)
+        rumps.notification("AGIMON", "Session beendet", session_id[:16])
+    return cb
 
 
 if __name__ == "__main__":
