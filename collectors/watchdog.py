@@ -25,6 +25,10 @@ HEALTH_THRESHOLDS = {
     "stale_session_minutes": 60,  # Consider session stale after 60min idle
 }
 
+_HEALTH_ISSUE_STATUSES = {"warning", "critical", "error"}
+_HEALTH_ISSUES_CACHE_TTL_SECONDS = 30.0
+_health_issues_cache: Optional[tuple[float, list["HealthCheck"]]] = None
+
 
 @dataclass
 class HealthCheck:
@@ -312,6 +316,26 @@ class AGIMONWatchdog:
             lines.append("✅ All systems healthy")
         
         return "\n".join(lines)
+
+
+def get_health_issues(max_age_seconds: float = _HEALTH_ISSUES_CACHE_TTL_SECONDS) -> list[HealthCheck]:
+    """Return current watchdog issues for lightweight UI consumers."""
+    global _health_issues_cache
+
+    now = time.monotonic()
+    if _health_issues_cache is not None:
+        cached_at, cached_issues = _health_issues_cache
+        if max_age_seconds > 0 and now - cached_at < max_age_seconds:
+            return list(cached_issues)
+
+    watchdog = AGIMONWatchdog()
+    issues = [
+        check
+        for check in watchdog.run_single_check()
+        if check.status in _HEALTH_ISSUE_STATUSES
+    ]
+    _health_issues_cache = (now, issues)
+    return list(issues)
 
 
 def run_watchdog_daemon():

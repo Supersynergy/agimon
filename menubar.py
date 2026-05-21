@@ -58,6 +58,7 @@ get_all_terminals_flat    = ttl_cache(3.0)(_raw_get_all_terminals_flat)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _ICON_PATH = "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/ToolbarAdvanced.icns"
 _KILL_ICON = "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/AlertStopIcon.icns"
+_watchdog_issue_error_logged = False
 
 PROJECTS = [
     ("🤖 SuperJarvis",      "/Users/master/projects/SUPERJARVIS",                     "http://localhost:7777"),
@@ -736,8 +737,14 @@ class ClaudeMenubar(rumps.App):
             try:
                 from collectors.watchdog import get_health_issues
                 watchdog_issues = len(get_health_issues())
-            except Exception:
-                pass
+            except Exception as e:
+                global _watchdog_issue_error_logged
+                if not _watchdog_issue_error_logged:
+                    print(json.dumps({
+                        "event": "watchdog_health_issues_error",
+                        "error": str(e),
+                    }), file=sys.stderr)
+                    _watchdog_issue_error_logged = True
 
             if act > 0:
                 self.title = f"⚡{act} 📡{tel_count} 💻{term_count}"
