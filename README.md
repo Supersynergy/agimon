@@ -1,3 +1,33 @@
+<!-- REPO-POLISH:START -->
+<p align="center">
+  <img src="docs/assets/social-preview.png" alt="Repo social preview" width="100%">
+</p>
+
+> Agimon is a Rust-first developer tool focused on fast local workflows.
+
+## Quick Start
+
+```bash
+git clone https://github.com/Supersynergy/agimon.git
+cd agimon
+cargo check --manifest-path core/Cargo.toml
+```
+
+Expected result: the project runs locally or reports the next missing prerequisite directly in the terminal.
+
+## Developer Map
+
+| Need | Command |
+|---|---|
+| build | `cargo build --manifest-path core/Cargo.toml` |
+| check | `cargo check --manifest-path core/Cargo.toml` |
+| raycast setup | `cd raycast-extension && bun install` |
+
+Full verification path: `cargo build --manifest-path core/Cargo.toml && cargo check --manifest-path core/Cargo.toml && cd raycast-extension && bun install`
+
+Agent instructions live in [AGENTS.md](AGENTS.md).
+<!-- REPO-POLISH:END -->
+
 <p align="center">
   <img src="https://img.shields.io/badge/⚡_AGIMON-Gotta_monitor_'em_all-ff9500?style=for-the-badge&labelColor=1a1a1a" alt="AGIMON" />
 </p>
