@@ -7,7 +7,7 @@
 
 <p align="center">
   <strong>The AGI-grade monitor for AI coding agents.</strong><br/>
-  One command to see every Claude Code, Gemini CLI, Codex instance — what it's doing, what it costs, and kill it if needed.
+  One command to see every Claude Code, Gemini CLI, Codex instance, what it's doing, what it costs, and kill it if needed.
 </p>
 
 <p align="center">
@@ -41,7 +41,7 @@ You're running **10+ AI coding agents** across terminals. Each one spawning suba
 
 ---
 
-## 🎬 What You Get
+## What You Get
 
 ```
 $ agimon
@@ -76,7 +76,7 @@ $ agimon
 
 ---
 
-## ⚡ 30-Second Setup
+## 30-Second Setup
 
 ```bash
 git clone https://github.com/supersynergy/agimon.git
@@ -90,13 +90,13 @@ ln -sf $(pwd)/agimon ~/.local/bin/agimon
 
 ---
 
-## 🎯 Commands
+## Commands
 
 ### Monitoring
 
 | Command | What |
 |---------|------|
-| `agimon` | Full dashboard — processes + costs |
+| `agimon` | Full dashboard, processes + costs |
 | `agimon live` | All running AI agents with live CPU/RAM bars |
 | `agimon sessions` | Active sessions + subagent tree + tool usage |
 | `agimon costs` | 14-day cost breakdown with sparkline bars |
@@ -138,7 +138,7 @@ ln -sf $(pwd)/agimon ~/.local/bin/agimon
 
 ---
 
-## 🏗 Architecture
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -161,9 +161,9 @@ ln -sf $(pwd)/agimon ~/.local/bin/agimon
 
 ---
 
-## ✨ Premium Features
+## Premium Features
 
-### 🧠 Smart Model Routing
+### Smart Model Routing
 Task too simple for Opus? AGIMON auto-downgrades:
 
 | Task | Model | Cost/1K |
@@ -173,43 +173,43 @@ Task too simple for Opus? AGIMON auto-downgrades:
 | File search, formatting | Haiku 4.5 | $0.001 |
 | Research drafts, brainstorm | Local MLX | $0.000 |
 
-Learns from past successes via Qdrant — if Haiku solved it last time, it won't waste Opus tokens.
+Learns from past successes via Qdrant, if Haiku solved it last time, it won't waste Opus tokens.
 
-### 🖥 Ghostty Native
-Not just "terminal monitor" — full AppleScript API integration:
-- **1 batched call** reads 20+ terminals (not 50 individual `osascript` calls)
-- **Click-to-focus** any terminal across macOS Spaces
-- **Read terminal content** via `perform action`
-- **Send commands** to any terminal from the CLI
-- **Map PIDs to windows** — see which Claude runs where
+### Ghostty Native
+Not just "terminal monitor", full AppleScript API integration:
+- 1 batched call reads 20+ terminals (not 50 individual `osascript` calls)
+- Click-to-focus any terminal across macOS Spaces
+- Read terminal content via `perform action`
+- Send commands to any terminal from the CLI
+- Map PIDs to windows, see which Claude runs where
 
-### 📋 Session Deep-Dive
+### Session Deep-Dive
 - Subagent tree: model, tools, tokens per agent
-- Tool usage: `Bash(12), Read(8), Write(3)` — see what agents do
+- Tool usage: `Bash(12), Read(8), Write(3)`, see what agents do
 - One-click: open project in Finder / IDE / Terminal / Claude
 
-### 🌐 Network Intelligence
+### Network Intelligence
 - SSH tunnel decoder: `:6333` = Qdrant, `:5432` = PostgreSQL
 - External connections grouped by app
 - Click any port → opens in browser
 
-### ⭐ One-Click Project Launch
+### One-Click Project Launch
 Every session, every terminal → submenu:
 - 📂 Open in Finder
 - 📝 Open in IDE
 - 💻 Launch Claude Code here
 - ⌨️ New terminal here
 
-### 💰 Cost Analytics
+### Cost Analytics
 14-day breakdown with bar charts, per-day granularity, exportable JSON.
 
 ---
 
-## 🔌 Integrations
+## Integrations
 
 | Tool | How |
 |------|-----|
-| **Ghostty** | AppleScript API — windows, tabs, terminals, focus, content |
+| **Ghostty** | AppleScript API, windows, tabs, terminals, focus, content |
 | **Qdrant** | Semantic search over session history |
 | **Raycast** | Extension: 4 commands + menubar |
 | **SketchyBar** | Desktop widgets |
@@ -220,7 +220,7 @@ Every session, every terminal → submenu:
 
 ---
 
-## 📁 Structure
+## Structure
 
 ```
 agimon/
@@ -243,7 +243,7 @@ agimon/
 
 ---
 
-## 🤝 Works With Any Terminal
+## Works With Any Terminal
 
 Built for **Ghostty** but process monitoring, cost tracking, and session analysis work everywhere. The orchestrator routes to:
 
@@ -262,17 +262,17 @@ Built for **Ghostty** but process monitoring, cost tracking, and session analysi
 
 ---
 
-## 🔎 Why AGIMON?
+## Why AGIMON?
 
 **If you use any of these, you need AGIMON:**
 
-- **Claude Code** (Anthropic CLI) — monitor sessions, subagents, tool calls, token costs
-- **Gemini CLI** (Google) — track processes, CPU, memory usage
-- **OpenAI Codex CLI** — see what's running, what it costs
-- **Kimi Code** (Moonshot) — process monitoring and control
-- **Cursor / Windsurf / Continue** — IDE agent tracking
-- **Aider** — monitor background coding agents
-- **Any AI CLI tool** — if it runs in a terminal, AGIMON sees it
+- Claude Code (Anthropic CLI), monitor sessions, subagents, tool calls, token costs
+- Gemini CLI (Google), track processes, CPU, memory usage
+- OpenAI Codex CLI, see what's running, what it costs
+- Kimi Code (Moonshot), process monitoring and control
+- Cursor / Windsurf / Continue, IDE agent tracking
+- Aider, monitor background coding agents
+- Any AI CLI tool, if it runs in a terminal, AGIMON sees it
 
 ### Compared to alternatives
 
