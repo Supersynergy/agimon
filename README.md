@@ -98,47 +98,107 @@ ln -sf $(pwd)/agimon ~/.local/bin/agimon
 
 ### Monitoring
 
-| Command | What |
-|---------|------|
-| `agimon` | Full dashboard, processes + costs |
-| `agimon live` | All running AI agents with live CPU/RAM bars |
-| `agimon sessions` | Active sessions + subagent tree + tool usage |
-| `agimon costs` | 14-day cost breakdown with sparkline bars |
-| `agimon net` | SSH tunnels, services, external connections |
-| `agimon ghostty` | Every Ghostty terminal with working dirs |
-| `agimon windows` | All visible windows across all macOS apps |
+<details>
+<summary><strong>📋 Show 7 entries</strong></summary>
+
+- **`agimon`**<br>
+  What: Full dashboard, processes + costs
+
+- **`agimon live`**<br>
+  What: All running AI agents with live CPU/RAM bars
+
+- **`agimon sessions`**<br>
+  What: Active sessions + subagent tree + tool usage
+
+- **`agimon costs`**<br>
+  What: 14-day cost breakdown with sparkline bars
+
+- **`agimon net`**<br>
+  What: SSH tunnels, services, external connections
+
+- **`agimon ghostty`**<br>
+  What: Every Ghostty terminal with working dirs
+
+- **`agimon windows`**<br>
+  What: All visible windows across all macOS apps
+
+</details>
+
 
 ### Orchestration
 
-| Command | What |
-|---------|------|
-| `agimon delegate "task"` | Auto-route to cheapest model that can handle it |
-| `agimon snap` | Full system snapshot (JSON) |
-| `agimon send 1 2 "ls"` | Send command to any Ghostty terminal |
-| `agimon focus 3` | Focus any window (even across Spaces) |
-| `agimon open ~/project` | One-click: Ghostty + Claude in that dir |
+<details>
+<summary><strong>📋 Show 5 entries</strong></summary>
+
+- **`agimon delegate "task"`**<br>
+  What: Auto-route to cheapest model that can handle it
+
+- **`agimon snap`**<br>
+  What: Full system snapshot (JSON)
+
+- **`agimon send 1 2 "ls"`**<br>
+  What: Send command to any Ghostty terminal
+
+- **`agimon focus 3`**<br>
+  What: Focus any window (even across Spaces)
+
+- **`agimon open ~/project`**<br>
+  What: One-click: Ghostty + Claude in that dir
+
+</details>
+
 
 ### Memory (Qdrant)
 
-| Command | What |
-|---------|------|
-| `agimon search "auth refactor"` | Semantic search over all past sessions |
-| `agimon index` | Auto-index current sessions into Qdrant |
-| `agimon history "query"` | Find what worked before |
-| `agimon predict` | **Cost prediction** - see which sessions will exceed budget |
-| `agimon mlx` | **MLX routing** - analyze local model opportunities |
-| `agimon watchdog` | **Health check** all components |
-| `agimon watchdog-daemon` | **Background monitor** with auto-recovery |
+<details>
+<summary><strong>📋 Show 7 entries</strong></summary>
+
+- **`agimon search "auth refactor"`**<br>
+  What: Semantic search over all past sessions
+
+- **`agimon index`**<br>
+  What: Auto-index current sessions into Qdrant
+
+- **`agimon history "query"`**<br>
+  What: Find what worked before
+
+- **`agimon predict`**<br>
+  What: **Cost prediction** - see which sessions will exceed budget
+
+- **`agimon mlx`**<br>
+  What: **MLX routing** - analyze local model opportunities
+
+- **`agimon watchdog`**<br>
+  What: **Health check** all components
+
+- **`agimon watchdog-daemon`**<br>
+  What: **Background monitor** with auto-recovery
+
+</details>
+
 
 ### Launch
 
-| Command | What |
-|---------|------|
-| `agimon tui` | Interactive 7-tab TUI dashboard |
-| `agimon menubar` | Persistent macOS menubar app |
-| `agimon qdrant` | Open Qdrant dashboard |
-| `agimon kill <pid>` | Kill a process |
-| `agimon kill-all` | Stop all Claude instances |
+<details>
+<summary><strong>📋 Show 5 entries</strong></summary>
+
+- **`agimon tui`**<br>
+  What: Interactive 7-tab TUI dashboard
+
+- **`agimon menubar`**<br>
+  What: Persistent macOS menubar app
+
+- **`agimon qdrant`**<br>
+  What: Open Qdrant dashboard
+
+- **`agimon kill <pid>`**<br>
+  What: Kill a process
+
+- **`agimon kill-all`**<br>
+  What: Stop all Claude instances
+
+</details>
+
 
 ---
 
@@ -170,12 +230,27 @@ ln -sf $(pwd)/agimon ~/.local/bin/agimon
 ### Smart Model Routing
 Task too simple for Opus? AGIMON auto-downgrades:
 
-| Task | Model | Cost/1K |
-|------|-------|---------|
-| Architecture review | Opus 4.6 | $0.075 |
-| Regular coding | Sonnet 4.6 | $0.015 |
-| File search, formatting | Haiku 4.5 | $0.001 |
-| Research drafts, brainstorm | Local MLX | $0.000 |
+<details>
+<summary><strong>📋 Show 4 entries</strong></summary>
+
+- **Architecture review**<br>
+  Model: Opus 4.6<br>
+  Cost/1K: $0.075
+
+- **Regular coding**<br>
+  Model: Sonnet 4.6<br>
+  Cost/1K: $0.015
+
+- **File search, formatting**<br>
+  Model: Haiku 4.5<br>
+  Cost/1K: $0.001
+
+- **Research drafts, brainstorm**<br>
+  Model: Local MLX<br>
+  Cost/1K: $0.000
+
+</details>
+
 
 Learns from past successes via Qdrant, if Haiku solved it last time, it won't waste Opus tokens.
 
@@ -211,16 +286,35 @@ Every session, every terminal → submenu:
 
 ## Integrations
 
-| Tool | How |
-|------|-----|
-| **Ghostty** | AppleScript API, windows, tabs, terminals, focus, content |
-| **Qdrant** | Semantic search over session history |
-| **Raycast** | Extension: 4 commands + menubar |
-| **SketchyBar** | Desktop widgets |
-| **Claude Code** | Session JSONL parsing, subagent tracking |
-| **context-mode** | Token-efficient MCP data gathering |
-| **RTK** | CLI output compression |
-| **Ollama/MLX** | Local model routing |
+<details>
+<summary><strong>📋 Show 8 entries</strong></summary>
+
+- **Ghostty**<br>
+  How: AppleScript API, windows, tabs, terminals, focus, content
+
+- **Qdrant**<br>
+  How: Semantic search over session history
+
+- **Raycast**<br>
+  How: Extension: 4 commands + menubar
+
+- **SketchyBar**<br>
+  How: Desktop widgets
+
+- **Claude Code**<br>
+  How: Session JSONL parsing, subagent tracking
+
+- **context-mode**<br>
+  How: Token-efficient MCP data gathering
+
+- **RTK**<br>
+  How: CLI output compression
+
+- **Ollama/MLX**<br>
+  How: Local model routing
+
+</details>
+
 
 ---
 
@@ -285,20 +379,90 @@ Built for **Ghostty** but process monitoring, cost tracking, and session analysi
 
 The full feature matrix is below. On a narrow screen, swipe horizontally within the table to view the remaining tools.
 
-| | AGIMON | Activity Monitor | htop | AgentOps | Langfuse |
-|---|---|---|---|---|---|
-| AI agent awareness | ✅ | ❌ | ❌ | ✅ | ✅ |
-| Terminal integration | ✅ Ghostty native | ❌ | ❌ | ❌ | ❌ |
-| No SDK required | ✅ | ✅ | ✅ | ❌ needs SDK | ❌ needs SDK |
-| macOS menubar | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Cost tracking | ✅ | ❌ | ❌ | ✅ | ✅ |
-| Semantic search | ✅ Qdrant | ❌ | ❌ | ❌ | ❌ |
-| Process kill/focus | ✅ | ✅ | ✅ | ❌ | ❌ |
-| One-click project launch | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Subagent tracking | ✅ | ❌ | ❌ | ✅ | ✅ |
-| SSH tunnel awareness | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Free & open source | ✅ | ✅ | ✅ | freemium | freemium |
-| Zero config | ✅ | ✅ | ✅ | ❌ | ❌ |
+- **AI agent awareness**<br>
+  AGIMON: ✅<br>
+  Activity Monitor: ❌<br>
+  htop: ❌<br>
+  AgentOps: ✅<br>
+  Langfuse: ✅
+
+- **Terminal integration**<br>
+  AGIMON: ✅ Ghostty native<br>
+  Activity Monitor: ❌<br>
+  htop: ❌<br>
+  AgentOps: ❌<br>
+  Langfuse: ❌
+
+- **No SDK required**<br>
+  AGIMON: ✅<br>
+  Activity Monitor: ✅<br>
+  htop: ✅<br>
+  AgentOps: ❌ needs SDK<br>
+  Langfuse: ❌ needs SDK
+
+- **macOS menubar**<br>
+  AGIMON: ✅<br>
+  Activity Monitor: ❌<br>
+  htop: ❌<br>
+  AgentOps: ❌<br>
+  Langfuse: ❌
+
+- **Cost tracking**<br>
+  AGIMON: ✅<br>
+  Activity Monitor: ❌<br>
+  htop: ❌<br>
+  AgentOps: ✅<br>
+  Langfuse: ✅
+
+- **Semantic search**<br>
+  AGIMON: ✅ Qdrant<br>
+  Activity Monitor: ❌<br>
+  htop: ❌<br>
+  AgentOps: ❌<br>
+  Langfuse: ❌
+
+- **Process kill/focus**<br>
+  AGIMON: ✅<br>
+  Activity Monitor: ✅<br>
+  htop: ✅<br>
+  AgentOps: ❌<br>
+  Langfuse: ❌
+
+- **One-click project launch**<br>
+  AGIMON: ✅<br>
+  Activity Monitor: ❌<br>
+  htop: ❌<br>
+  AgentOps: ❌<br>
+  Langfuse: ❌
+
+- **Subagent tracking**<br>
+  AGIMON: ✅<br>
+  Activity Monitor: ❌<br>
+  htop: ❌<br>
+  AgentOps: ✅<br>
+  Langfuse: ✅
+
+- **SSH tunnel awareness**<br>
+  AGIMON: ✅<br>
+  Activity Monitor: ❌<br>
+  htop: ❌<br>
+  AgentOps: ❌<br>
+  Langfuse: ❌
+
+- **Free & open source**<br>
+  AGIMON: ✅<br>
+  Activity Monitor: ✅<br>
+  htop: ✅<br>
+  AgentOps: freemium<br>
+  Langfuse: freemium
+
+- **Zero config**<br>
+  AGIMON: ✅<br>
+  Activity Monitor: ✅<br>
+  htop: ✅<br>
+  AgentOps: ❌<br>
+  Langfuse: ❌
+
 
 </details>
 
