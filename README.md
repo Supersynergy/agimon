@@ -2,6 +2,8 @@
   <img src="https://img.shields.io/badge/⚡_AGIMON-Gotta_monitor_'em_all-ff9500?style=for-the-badge&labelColor=1a1a1a" alt="AGIMON" />
 </p>
 
+<p align="center"><img src="assets/cover.png" alt="AGIMON agent monitoring illustration" /></p>
+
 <h1 align="center">⚡ AGIMON</h1>
 <h3 align="center">Gotta monitor 'em all.</h3>
 
@@ -11,8 +13,8 @@
 </p>
 
 <p align="center">
-  <a href="#-30-second-setup"><img src="https://img.shields.io/badge/Setup-30_seconds-00d084?style=flat-square" /></a>
-  <a href="#-what-you-get"><img src="https://img.shields.io/badge/Features-29-ff9500?style=flat-square" /></a>
+  <a href="#30-second-setup"><img src="https://img.shields.io/badge/Setup-30_seconds-00d084?style=flat-square" /></a>
+  <a href="#what-you-get"><img src="https://img.shields.io/badge/Features-29-ff9500?style=flat-square" /></a>
   <img src="https://img.shields.io/badge/macOS-Ghostty_Native-333?style=flat-square&logo=apple" />
   <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" />
 </p>
@@ -24,6 +26,8 @@
   <img src="https://img.shields.io/badge/Raycast-Extension-ff6363?style=flat-square" />
   <img src="https://img.shields.io/badge/SketchyBar-Desktop_Widget-7c3aed?style=flat-square" />
 </p>
+
+**🧭 Explore:** [Setup](#30-second-setup) · [Features](#what-you-get) · [Commands](#commands) · [Architecture](#architecture) · [Integrations](#integrations)
 
 ---
 
