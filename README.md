@@ -280,6 +280,11 @@ Built for **Ghostty** but process monitoring, cost tracking, and session analysi
 
 ### Compared to alternatives
 
+<details>
+<summary><strong>📊 Compare AGIMON with four alternatives</strong></summary>
+
+The full feature matrix is below. On a narrow screen, swipe horizontally within the table to view the remaining tools.
+
 | | AGIMON | Activity Monitor | htop | AgentOps | Langfuse |
 |---|---|---|---|---|---|
 | AI agent awareness | ✅ | ❌ | ❌ | ✅ | ✅ |
@@ -294,6 +299,8 @@ Built for **Ghostty** but process monitoring, cost tracking, and session analysi
 | SSH tunnel awareness | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Free & open source | ✅ | ✅ | ✅ | freemium | freemium |
 | Zero config | ✅ | ✅ | ✅ | ❌ | ❌ |
+
+</details>
 
 ### Who is this for?
 
