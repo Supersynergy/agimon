@@ -1,8 +1,11 @@
 <p align="center">
+  <img src="assets/cover.png" alt="AGIMON" width="960">
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/⚡_AGIMON-Gotta_monitor_'em_all-ff9500?style=for-the-badge&labelColor=1a1a1a" alt="AGIMON" />
 </p>
 
-<p align="center"><img src="assets/cover.png" alt="AGIMON" /></p>
 
 <h1 align="center">⚡ AGIMON</h1>
 <h3 align="center">Gotta monitor 'em all.</h3>
